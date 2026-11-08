@@ -1,8 +1,8 @@
 {
   "name": "hush",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Redact secrets from Bash tool output before the model sees it.",
+  "description": "Redact secrets from tool output before the model sees it.",
   "license": "MIT",
   "repository": { "type": "git", "url": "git+https://github.com/versa-training/hush.git" },
   "engines": { "node": ">=22" },

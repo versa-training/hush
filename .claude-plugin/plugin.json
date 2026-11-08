@@ -1,7 +1,7 @@
 {
   "name": "hush",
-  "version": "0.1.0",
-  "description": "Redact secrets from Bash tool output before the model sees it.",
+  "version": "0.2.0",
+  "description": "Redact secrets from tool output before the model sees it.",
   "author": { "name": "versa.training", "url": "https://versa.training" },
   "homepage": "https://github.com/versa-training/hush",
   "repository": "https://github.com/versa-training/hush",
@@ -10,7 +10,7 @@
   "hooks": {
     "PostToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
