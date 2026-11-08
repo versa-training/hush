@@ -76,8 +76,12 @@ function loadKnown(cfg) {
       try { text = fs.readFileSync(p, 'utf8'); } catch { files.push({ path: p, exists: false, count: 0 }); continue; }
       const isJson = p.endsWith('.json') || text.trimStart().startsWith('{');
       let pairs = isJson ? parseJson(JSON.parse(text)) : parseDotenv(text).filter(([, v]) => v);
-      // A file with no NAME=value lines is one bare value named after the file.
-      if (!isJson && !pairs.length && text.trim()) pairs = [[path.basename(p), text.trim()]];
+      // A file with no NAME=value lines holds bare values: each line, plus the whole text if multi-line.
+      if (!isJson && !pairs.length && text.trim()) {
+        const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+        if (lines.length > 1) lines.push(text.trim());
+        pairs = lines.map((l) => [path.basename(p), l]);
+      }
       const good = pairs.filter(([, v]) => v.length >= cfg.minLength);
       files.push({ path: p, exists: true, count: good.length });
       for (const [name, value] of good) values.push({ name, value });

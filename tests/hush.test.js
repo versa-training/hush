@@ -59,6 +59,13 @@ test('bare-value file is redacted under its basename', () => {
   assert.ok(!run(pem, { files: [write('key.pem', pem + '\n')] }).text.includes('BEGIN PRIVATE KEY-----\n'));
 });
 
+test('multi-line bare file: each line and the whole text are redacted', () => {
+  const a = hex(20), b = hex(20);
+  const f = write('bare-list', `${a}\n${b}\n`);
+  assert.equal(run(`x ${b}`, { files: [f] }).text, `x [hush bare-list sha:${sha8(b)}]`);
+  assert.ok(!run(`${a}\n${b}`, { files: [f] }).text.includes(a));
+});
+
 test('fake placeholder wrapping a value does not hide it', () => {
   const v = hex(24);
   const f = write('ph.env', `P_TOKEN=${v}\n`);
