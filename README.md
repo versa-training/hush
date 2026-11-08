@@ -14,7 +14,7 @@
 <tr>
 <td align="center" width="33.3%"><h3>Every tool</h3>Bash, Read, Grep, MCP tools, and the rest pass through one <code>PostToolUse</code> hook</td>
 <td align="center" width="33.3%"><h3>13 patterns</h3>plus every known value from the dotenv and JSON files you list</td>
-<td align="center" width="33.3%"><h3>Fails closed</h3>if redaction throws, the output is withheld, never passed through</td>
+<td align="center" width="33.3%"><h3>Withheld on error</h3>if redaction throws, the output is withheld, never passed through</td>
 </tr>
 </table>
 
