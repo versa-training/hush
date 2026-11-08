@@ -1,0 +1,33 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tests
+        run: npm test
+      - name: Manifests are valid JSON
+        run: |
+          for f in .claude-plugin/plugin.json .claude-plugin/marketplace.json package.json; do
+            node -e 'JSON.parse(require("fs").readFileSync(process.argv[1]))' "$f"
+          done
+      - name: Versions match
+        run: |
+          node -e '
+            const read = (f) => JSON.parse(require("fs").readFileSync(f));
+            const versions = new Set([
+              read(".claude-plugin/plugin.json").version,
+              read("package.json").version,
+              read(".claude-plugin/marketplace.json").plugins[0].version,
+            ]);
+            if (versions.size !== 1) throw new Error(`version mismatch: ${[...versions]}`);
+          '

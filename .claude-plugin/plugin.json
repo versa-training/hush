@@ -1,0 +1,24 @@
+{
+  "name": "hush",
+  "version": "0.1.0",
+  "description": "Redact secrets from Bash tool output before the model sees it.",
+  "author": { "name": "versa.training", "url": "https://versa.training" },
+  "homepage": "https://github.com/versa-training/hush",
+  "repository": "https://github.com/versa-training/hush",
+  "license": "MIT",
+  "keywords": ["secrets", "redaction", "hooks", "security"],
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/redact.js\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

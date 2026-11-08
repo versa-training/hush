@@ -1,0 +1,17 @@
+{
+  "name": "hush",
+  "description": "Redact secrets from Bash tool output before the model sees it.",
+  "owner": { "name": "versa.training", "url": "https://versa.training" },
+  "plugins": [
+    {
+      "name": "hush",
+      "description": "Redact secrets from Bash tool output before the model sees it.",
+      "version": "0.1.0",
+      "license": "MIT",
+      "homepage": "https://github.com/versa-training/hush",
+      "author": { "name": "versa.training" },
+      "source": "./",
+      "tags": ["security", "secrets", "hooks"]
+    }
+  ]
+}
