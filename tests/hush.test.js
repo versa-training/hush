@@ -24,10 +24,10 @@ const run = (text, cfg = {}) => {
   return redact(text, c, known);
 };
 
-function hook(response, env = {}) {
+function hook(response, env = {}, tool = 'Bash') {
   const cfg = write(`hcfg-${hex(4)}.json`, '{}');
   const r = spawnSync('node', [path.join(__dirname, '../hooks/redact.js')], {
-    input: JSON.stringify({ tool_name: 'Bash', tool_response: response }),
+    input: JSON.stringify({ tool_name: tool, tool_response: response }),
     env: { ...process.env, HUSH_CONFIG: cfg, HUSH_LOG: path.join(tmp, 'log.jsonl'), ...env },
     encoding: 'utf8',
   });
@@ -163,7 +163,7 @@ test('hook: fails closed on a bad regex', () => {
   const r = hook({ stdout: 'secret stuff', stderr: 'e' }, { HUSH_CONFIG: bad });
   assert.equal(r.status, 0);
   assert.equal(r.out.updatedToolOutput.stdout, '[hush] output withheld: redaction failed (SyntaxError)');
-  assert.equal(r.out.updatedToolOutput.stderr, '');
+  assert.equal(r.out.updatedToolOutput.stderr, '[hush] output withheld: redaction failed (SyntaxError)');
 });
 
 test('log holds counts, no value', () => {
@@ -186,4 +186,60 @@ test('performance: 100 KB, 250 known values', () => {
   console.log(`# perf: ${ms.toFixed(1)} ms for ${(text.length / 1024).toFixed(0)} KB`);
   assert.ok(ms < 100, `${ms} ms`);
   assert.ok(!vals.some((v) => r.text.includes(v)));
+});
+
+const W = (c) => `[hush] output withheld: redaction failed (${c})`;
+const bad = () => write(`bad-${hex(3)}.json`, JSON.stringify({ patterns: [{ name: 'x', regex: '(' }] }));
+
+test('hook: Read shape, non-string fields kept, no notice', () => {
+  const v = `X_TOKEN=${b64(24)}`;
+  const resp = { type: 'text', file: { filePath: '/a/.env', content: `a\n${v}\n`, numLines: 2, startLine: 1, totalLines: 2 } };
+  const o = hook(resp, {}, 'Read').out.updatedToolOutput;
+  assert.ok(!JSON.stringify(o).includes(v) && o.file.content.includes('[hush env'));
+  assert.deepEqual({ ...o, file: { ...o.file, content: 0 } }, { ...resp, file: { ...resp.file, content: 0 } });
+  assert.ok(!JSON.stringify(o).includes('redacted 1'));
+});
+
+test('hook: Grep shape', () => {
+  const v = `X_TOKEN=${b64(24)}`;
+  const resp = { mode: 'content', numFiles: 1, filenames: ['/a/.env'], content: `1:${v}`, numLines: 1, totalLines: 1 };
+  const o = hook(resp, {}, 'Grep').out.updatedToolOutput;
+  assert.ok(!JSON.stringify(o).includes(v));
+  assert.deepEqual([o.mode, o.numFiles, o.filenames, o.numLines], ['content', 1, ['/a/.env'], 1]);
+});
+
+test('hook: MCP array uses updatedMCPToolOutput', () => {
+  const v = `X_TOKEN=${b64(24)}`;
+  const r = hook([{ type: 'text', text: v }], {}, 'mcp__fake__get');
+  assert.equal(r.out.updatedToolOutput, undefined);
+  assert.ok(Array.isArray(r.out.updatedMCPToolOutput));
+  assert.equal(r.out.updatedMCPToolOutput[0].type, 'text');
+  assert.match(r.out.updatedMCPToolOutput[0].text, /^X_TOKEN=\[hush env sha:/);
+});
+
+test('hook: nested object and plain string', () => {
+  const v = `X_TOKEN=${b64(24)}`;
+  const o = hook({ a: { b: [{ c: v, n: 5, t: true, z: null }] } }, {}, 'Foo').out.updatedToolOutput;
+  assert.deepEqual([o.a.b[0].n, o.a.b[0].t, o.a.b[0].z], [5, true, null]);
+  assert.ok(!JSON.stringify(o).includes(v));
+  const s = hook(`pre ${v}`, {}, 'Foo').out.updatedToolOutput;
+  assert.equal(typeof s, 'string');
+  assert.ok(!s.includes(v));
+});
+
+test('hook: no output for short strings, empty response, no tool_response', () => {
+  assert.equal(hook({ a: 'hi', n: 3 }, {}, 'Foo').stdout, '');
+  assert.equal(hook('', {}, 'Foo').stdout, '');
+  const r = spawnSync('node', [path.join(__dirname, '../hooks/redact.js')], { input: '{"tool_name":"Read"}', encoding: 'utf8' });
+  assert.deepEqual([r.status, r.stdout], [0, '']);
+});
+
+test('hook: fails closed per shape', () => {
+  const env = { HUSH_CONFIG: bad() };
+  const long = 'some long output text';
+  const rd = hook({ type: 'text', file: { filePath: '/a', content: long, numLines: 4 } }, env, 'Read').out.updatedToolOutput;
+  assert.deepEqual(rd, { type: W('SyntaxError'), file: { filePath: W('SyntaxError'), content: W('SyntaxError'), numLines: 4 } });
+  const m = hook([{ type: 'text', text: long }], env, 'mcp__x__y').out.updatedMCPToolOutput;
+  assert.deepEqual(m, [{ type: W('SyntaxError'), text: W('SyntaxError') }]);
+  assert.equal(hook(long, env, 'Foo').out.updatedToolOutput, W('SyntaxError'));
 });
