@@ -51,6 +51,22 @@ test('known value from JSON, including Bearer part and short values ignored', ()
   assert.match(r.text, /\[hush apiKey sha:/);
 });
 
+test('bare-value file is redacted under its basename', () => {
+  const v = hex(24);
+  const f = write('bare-token', `${v}\n`);
+  assert.equal(run(`x ${v}`, { files: [f] }).text, `x [hush bare-token sha:${sha8(v)}]`);
+  const pem = `-----BEGIN PRIVATE KEY-----\n${b64(40)}==\n-----END PRIVATE KEY-----`;
+  assert.ok(!run(pem, { files: [write('key.pem', pem + '\n')] }).text.includes('BEGIN PRIVATE KEY-----\n'));
+});
+
+test('fake placeholder wrapping a value does not hide it', () => {
+  const v = hex(24);
+  const f = write('ph.env', `P_TOKEN=${v}\n`);
+  assert.ok(!run(`[hush ${v}]`, { files: [f] }).text.includes(v));
+  assert.ok(!run(`\0\0[hush ${v}] \u00000\u0000 ${v}`, { files: [f] }).text.includes(v));
+  assert.ok(!run(`[hush X_TOKEN=${v}]`).text.includes(v));
+});
+
 test('glob files and missing file skipped', () => {
   const v = hex(20);
   write('g1.env', `A_SECRET=${v}\n`);

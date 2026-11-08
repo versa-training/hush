@@ -75,7 +75,9 @@ function loadKnown(cfg) {
       let text;
       try { text = fs.readFileSync(p, 'utf8'); } catch { files.push({ path: p, exists: false, count: 0 }); continue; }
       const isJson = p.endsWith('.json') || text.trimStart().startsWith('{');
-      const pairs = isJson ? parseJson(JSON.parse(text)) : parseDotenv(text);
+      let pairs = isJson ? parseJson(JSON.parse(text)) : parseDotenv(text).filter(([, v]) => v);
+      // A file with no NAME=value lines is one bare value named after the file.
+      if (!isJson && !pairs.length && text.trim()) pairs = [[path.basename(p), text.trim()]];
       const good = pairs.filter(([, v]) => v.length >= cfg.minLength);
       files.push({ path: p, exists: true, count: good.length });
       for (const [name, value] of good) values.push({ name, value });
@@ -88,13 +90,13 @@ function loadKnown(cfg) {
   };
 }
 
-const PLACEHOLDER = /\[hush [^\]]*\]/g;
+const TOKEN = /\0\d+\0/g;
 
-// Applies fn to the text outside existing placeholders.
+// Applies fn to the text outside tokens that stand for placeholders made in this run.
 const outside = (text, fn) => {
   const parts = [];
   let last = 0;
-  for (const m of text.matchAll(PLACEHOLDER)) {
+  for (const m of text.matchAll(TOKEN)) {
     parts.push(fn(text.slice(last, m.index)), m[0]);
     last = m.index + m[0].length;
   }
@@ -105,8 +107,13 @@ const outside = (text, fn) => {
 // Returns {text, counts}; counts maps NAME or pattern name to replacements.
 function redact(text, cfg, known, compiled = compile(cfg)) {
   const counts = {};
+  const made = [];
+  text = text.replace(/\0/g, '');
   const allow = new Set(cfg.allow);
-  const ph = (name, v) => `[hush ${name}${v.length >= cfg.minLength ? ' sha:' + sha8(v) : ''}]`;
+  const ph = (name, v) => {
+    made.push(`[hush ${name.replace(/[^A-Za-z0-9_.:-]/g, '_')}${v.length >= cfg.minLength ? ' sha:' + sha8(v) : ''}]`);
+    return `\0${made.length - 1}\0`;
+  };
   const hit = (name) => (counts[name] = (counts[name] || 0) + 1);
   for (const { name, value } of known) {
     if (allow.has(sha8(value))) continue;
@@ -128,7 +135,7 @@ function redact(text, cfg, known, compiled = compile(cfg)) {
       return m.slice(0, i) + ph(name, g) + m.slice(i + g.length);
     }));
   }
-  return { text, counts };
+  return { text: text.replace(TOKEN, (t) => made[parseInt(t.slice(1), 10)]), counts };
 }
 
 const compile = (cfg) => cfg.patterns.map((p) => ({ name: p.name, re: new RegExp(p.regex, 'g') }));

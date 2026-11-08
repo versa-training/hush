@@ -43,3 +43,7 @@ Claude Code ignores a malformed hook output and shows the original text. So if t
 - Values outside the listed files that match no pattern.
 - Output of tools other than Bash.
 - Telemetry, which sees the original output.
+
+## Non-secret values
+
+A value of `minLength` or more characters in a listed file is redacted even when it is not secret, for example a region name in a `.env` file. Copy the sha from its placeholder into `allow` to keep it. A listed file with no `NAME=value` lines counts as one value named after the file.
