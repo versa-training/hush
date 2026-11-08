@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-const { loadConfig, loadKnown, redact, log } = require('./hush-lib');
+const { loadConfig, loadKnown, buildKnown, compile, redact, log } = require('./hush-lib');
 
 let payload;
 try { payload = JSON.parse(require('fs').readFileSync(0, 'utf8')); } catch { process.exit(0); }
@@ -33,9 +33,11 @@ try {
   mapStrings(r, (s) => { long = long || s.length >= cfg.minLength; return s; });
   if (!long) process.exit(0);
   const known = loadKnown(cfg).values;
+  const compiled = compile(cfg);
+  const index = buildKnown(known, cfg);
   const counts = {};
   let out = mapStrings(r, (s) => {
-    const x = redact(s, cfg, known);
+    const x = redact(s, cfg, known, compiled, index);
     for (const [k, n] of Object.entries(x.counts)) counts[k] = (counts[k] || 0) + n;
     return x.text;
   });

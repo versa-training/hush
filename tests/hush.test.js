@@ -243,3 +243,17 @@ test('hook: fails closed per shape', () => {
   assert.deepEqual(m, [{ type: W('SyntaxError'), text: W('SyntaxError') }]);
   assert.equal(hook(long, env, 'Foo').out.updatedToolOutput, W('SyntaxError'));
 });
+
+test('performance: hook with 2,000 short strings and 166 known values', () => {
+  const vals = Array.from({ length: 166 }, () => hex(16));
+  const f = write('perf2.env', vals.map((v, i) => `K${i}_TOKEN=${v}`).join('\n'));
+  const cfg = write('perf2.json', JSON.stringify({ files: [f] }));
+  const names = Array.from({ length: 2000 }, (_, i) => `/src/app/dir${i}/file-${hex(4)}.ts`);
+  names[7] = `/x/${vals[3]}`;
+  const t0 = performance.now();
+  const r = hook({ filenames: names, numFiles: 2000 }, { HUSH_CONFIG: cfg }, 'Glob');
+  const ms = performance.now() - t0;
+  console.log(`# perf: ${ms.toFixed(0)} ms hook call incl. node start, 2000 strings`);
+  assert.ok(!JSON.stringify(r.out).includes(vals[3]));
+  assert.ok(ms < 200, `${ms} ms`);
+});

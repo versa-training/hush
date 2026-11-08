@@ -109,23 +109,22 @@ const outside = (text, fn) => {
 };
 
 // Returns {text, counts}; counts maps NAME or pattern name to replacements.
-function redact(text, cfg, known, compiled = compile(cfg)) {
+function redact(text, cfg, known, compiled = compile(cfg), index = buildKnown(known, cfg)) {
   const counts = {};
   const made = [];
   text = text.replace(/\0/g, '');
-  const allow = new Set(cfg.allow);
   const ph = (name, v) => {
     made.push(`[hush ${name.replace(/[^A-Za-z0-9_.:-]/g, '_')}${v.length >= cfg.minLength ? ' sha:' + sha8(v) : ''}]`);
     return `\0${made.length - 1}\0`;
   };
+  const allow = new Set(cfg.allow);
   const hit = (name) => (counts[name] = (counts[name] || 0) + 1);
-  for (const { name, value } of known) {
-    if (allow.has(sha8(value))) continue;
-    text = outside(text, (seg) => {
-      const parts = seg.split(value);
-      if (parts.length < 2) return seg;
-      for (let i = 1; i < parts.length; i++) hit(name);
-      return parts.join(ph(name, value));
+  // A string shorter than minLength cannot hold a known value.
+  if (index.re && text.length >= cfg.minLength) {
+    text = text.replace(index.re, (m) => {
+      const name = index.names.get(m);
+      hit(name);
+      return ph(name, m);
     });
   }
   for (const { name, re } of compiled) {
@@ -142,6 +141,16 @@ function redact(text, cfg, known, compiled = compile(cfg)) {
   return { text: text.replace(TOKEN, (t) => made[parseInt(t.slice(1), 10)]), counts };
 }
 
+// One alternation for all known values, longest first; allow-listed values are left out.
+function buildKnown(known, cfg) {
+  const allow = new Set(cfg.allow);
+  const names = new Map();
+  for (const { name, value } of known) if (!allow.has(sha8(value)) && !names.has(value)) names.set(value, name);
+  if (!names.size) return { re: null, names };
+  const alt = [...names.keys()].sort((x, y) => y.length - x.length).map((v) => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  return { re: new RegExp(alt.join('|'), 'g'), names };
+}
+
 const compile = (cfg) => cfg.patterns.map((p) => ({ name: p.name, re: new RegExp(p.regex, 'g') }));
 
 function log(tool, counts) {
@@ -150,4 +159,4 @@ function log(tool, counts) {
   fs.appendFileSync(file, JSON.stringify({ ts: new Date().toISOString(), tool, counts }) + '\n', { mode: 0o600 });
 }
 
-module.exports = { loadConfig, loadKnown, redact, compile, expand, log, sha8 };
+module.exports = { buildKnown, loadConfig, loadKnown, redact, compile, expand, log, sha8 };
