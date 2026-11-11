@@ -248,6 +248,49 @@ test('a line longer than the cut size keeps a secret near the cut', () => {
   }
 });
 
+// Runs filter.js alone on writes (strings, or numbers: a pause in ms). Returns the text on fd 3.
+function filterAlone(writes, env = {}) {
+  return new Promise((resolve) => {
+    const p = spawn('node', [FILTER, 'cut0', 'bash'], { stdio: ['pipe', 'pipe', 'inherit', 'pipe'], env: { ...ENV, ...env } });
+    let out = '';
+    p.stdio[3].on('data', (d) => { out += d; });
+    (async () => {
+      for (const w of writes) {
+        if (typeof w === 'number') await new Promise((res) => setTimeout(res, w));
+        else p.stdin.write(w);
+      }
+      p.stdin.end('\0HUSH:cut0\0');
+    })();
+    p.on('close', () => resolve(out));
+  });
+}
+
+test('a line longer than the cut size, no whitespace anywhere: a known value or a pattern match across the cut is redacted, in one read and in two', async () => {
+  const known = path.join(tmp, 'cut-known.env');
+  const cfg = path.join(tmp, 'cut-cfg.json');
+  fs.writeFileSync(cfg, JSON.stringify({ files: [known] }));
+  // The first 65,536 characters arrive in one read (or in two, the second
+  // reaching 65,536), so the cut falls at 65,536 - 4,096 = 61,440.
+  const cut = 65536 - 4096;
+  for (const [kind, filler] of [['known', 'Z'], ['known', '{"a":"b","c":1},'], ['pattern', 'Z'], ['pattern', '{"a":"b","c":1},']]) {
+    const v = hex(24);
+    fs.writeFileSync(known, `CUT_SECRET=${kind === 'known' ? v : hex(24)}\n`);
+    const item = kind === 'known' ? v : `X_TOKEN=${v}`;
+    const fill = (n) => filler.repeat(Math.ceil(n / filler.length) + 1).slice(0, n);
+    for (const at of [cut - 20, cut - 5, cut - item.length + 3]) {
+      const head = fill(at) + item + fill(65536 - at - item.length);
+      const tail = `${fill(5000)}\n`;
+      for (const writes of [[head, 50, tail], [head.slice(0, 40000), 50, head.slice(40000), 50, tail]]) {
+        const out = await filterAlone(writes, { HUSH_CONFIG: cfg });
+        const tag = `${kind} ${JSON.stringify(filler)} at ${at}, ${writes.length === 3 ? 'one read' : 'two reads'}`;
+        assert.ok(!out.includes(v.slice(0, 16)) && !out.includes(v.slice(-16)), tag);
+        assert.ok(out.includes(kind === 'known' ? `[hush CUT_SECRET sha:${sha8(v)}]` : 'X_TOKEN=[hush env sha:'), tag);
+        assert.equal(out.match(/\[hush [^\]]*\]/g).length, 1, tag);
+      }
+    }
+  }
+});
+
 test('a 3 MB run of letters with no newline does not stall', () => {
   const t0 = Date.now();
   const r = sh('head -c 3000000 /dev/zero | tr "\\0" "b"');

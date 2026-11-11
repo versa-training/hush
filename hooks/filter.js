@@ -20,8 +20,12 @@ const MARK = `\0HUSH:${nonce}\0`;
 const HEAD = `\0HUSHCMD:${nonce}\0`;
 // A line longer than this is cut and redacted in parts.
 const CAP = Number(process.env.HUSH_FILTER_CAP || 65536);
-// The tail of a cut line is kept for the next part, so a value up to this length is not split.
+// The tail of a cut line is kept for the next part. The cut never falls
+// inside a known value or a pattern match: it moves to the start of the match.
 const KEEP = 4096;
+// A match that runs from the start of a long line to its end holds the line
+// until it reaches this size; then the line is cut anyway.
+const HARD = CAP * 16;
 // A partial line with no newline is written after this much idle time.
 const IDLE_MS = Number(process.env.HUSH_FILTER_IDLE_MS || 250);
 const PEM_OPEN = /-----BEGIN [A-Z ]*PRIVATE KEY-----(?![\s\S]*-----END [A-Z ]*PRIVATE KEY-----)/;
@@ -97,10 +101,39 @@ function drain(all) {
     const headEnd = pending.length - KEEP;
     let ws = headEnd - 1;
     while (ws > headEnd - 65536 && ws > 0 && !/\s/.test(pending[ws])) ws--;
-    const cut = ws > 0 && /\s/.test(pending[ws]) ? ws + 1 : headEnd;
+    let cut = safeCut(pending, ws > 0 && /\s/.test(pending[ws]) ? ws + 1 : headEnd);
+    if (cut <= 0) {
+      if (pending.length < HARD) return;
+      cut = headEnd;
+    }
     emit(pending.slice(0, cut));
     pending = pending.slice(cut);
   }
+}
+
+// [start, end) of every known value, pattern match, and (strict mode) long word in text.
+function spans(text) {
+  const out = [];
+  const add = (re) => { for (const m of text.matchAll(re)) if (m[0]) out.push([m.index, m.index + m[0].length]); };
+  if (ctx.index.re) add(ctx.index.re);
+  for (const { re } of ctx.compiled) add(re);
+  if (strict) add(/[^\s"'`,;()[\]{}<>]{20,}/g);
+  return out;
+}
+
+// Moves a cut out of every match that spans it: back to the start of the
+// match, or, when the match starts the text, forward to its end. Returns 0
+// when no such cut exists yet (a match runs from the start to the end of the
+// text and may go on), so the caller waits for more text.
+function safeCut(text, cut) {
+  const all = spans(text);
+  const over = (c) => all.filter(([s, e]) => s < c && c < e);
+  let c = cut;
+  for (let o = over(c); o.length && c > 0; o = over(c)) c = Math.min(...o.map(([s]) => s));
+  if (c > 0) return c;
+  c = cut;
+  for (let o = over(c); o.length; o = over(c)) c = Math.max(...o.map(([, e]) => e));
+  return c < text.length ? c : 0;
 }
 
 function finish() {
