@@ -13,12 +13,12 @@
 <table>
 <tr>
 <td align="center" width="33.3%"><h3>Every tool</h3>Bash, Read, Grep, MCP tools, and the rest pass through a <code>PostToolUse</code> hook; Bash and Monitor output is also filtered as it streams</td>
-<td align="center" width="33.3%"><h3>13 patterns</h3>plus every known value from the dotenv and JSON files you list</td>
+<td align="center" width="33.3%"><h3>28 patterns</h3>plus every known value from the dotenv and JSON files you list</td>
 <td align="center" width="33.3%"><h3>Withheld on error</h3>if redaction throws, the output is withheld, never passed through</td>
 </tr>
 </table>
 
-**[What it does](#what-it-does) · [Output filter](#output-filter) · [Install](#install) · [Config](#config) · [Fails closed](#fails-closed) · [Limits](#limits) · [Development](#development)**
+**[What it does](#what-it-does) · [Password arguments](#password-arguments) · [Literal block](#literal-block) · [Strict commands](#strict-commands) · [Output filter](#output-filter) · [Install](#install) · [Config](#config) · [Fails closed](#fails-closed) · [Limits](#limits) · [Development](#development)**
 
 </div>
 
@@ -42,7 +42,103 @@ hush finds secrets from two sources, in this order:
 | Source | What is redacted |
 |---|---|
 | Known values | Values of `minLength` characters or more from the files you list, longest first. |
-| Patterns | Env-style assignments, JWTs, database URL passwords, DSNs, PEM private keys, Bearer headers, and GitHub, Anthropic, OpenAI, AWS, Google, Slack, and Stripe tokens. |
+| Patterns | Env-style assignments, JWTs, URL passwords, DSNs, PEM private keys, Bearer and Basic headers, password arguments, and GitHub, Anthropic, OpenAI, AWS, Google, Slack, and Stripe tokens. |
+
+## Password arguments
+
+Fifteen patterns find a password given as a command argument, in any output: a shell command in a log, a process list, or `docker inspect`. They run for every tool, like the other patterns, and replace only the value.
+
+| Pattern | Finds the value in |
+|---|---|
+| `redis-cli-a` | `redis-cli ... -a <value>` and `--pass <value>` |
+| `pass-flag` | `--password <value>`, `--password=<value>`, `--pass`, `--http-password`, `--ftp-password`, `--proxy-password` |
+| `requirepass` | `requirepass <value>`, `masterauth <value>`, also as `--requirepass` |
+| `pgpassword` | `PGPASSWORD=<value>` |
+| `mysql-p` | `-p<value>` after `mysql`, `mariadb`, `mysqldump`, or `mysqladmin` |
+| `sshpass` | `sshpass -p <value>` |
+| `curl-user` | `curl ... -u user:<value>` and `--user user:<value>` |
+| `basic-auth` | `Authorization: Basic <value>` |
+| `url-password-any` | `user:<value>@` in `redis`, `rediss`, `amqp`, `amqps`, `mongodb`, `mongodb+srv`, `http`, `https`, `ftp`, `smtp`, and `smtps` URLs |
+| `argv-redis-cli`, `argv-pass-flag`, `argv-requirepass`, `argv-mysql-p`, `argv-sshpass`, `argv-curl-user` | The same arguments as a list of JSON strings, as `docker inspect` prints a command: `"redis-cli", "-a", "<value>"`, `"--requirepass", "<value>"`, also with newlines between the elements |
+
+- A value must have 6 or more characters. One that starts with `$`, a backtick, `[`, or `<` is left alone (after a flag also one that starts with `-`), so `-a "$REDIS_PASSWORD"`, `${VAR}`, `$(cat file)`, and hush's own placeholders stay as they are. The `env` and URL password patterns also leave `$VAR`, `${VAR}`, and `$(...)` alone.
+- The output filter sends each line as soon as it ends, but a pretty-printed JSON array puts a flag and its value on separate lines. So the filter holds a run of lines that are JSON string elements followed by a comma until a line that is not one arrives, and redacts the run together with that line, up to 64 KB. A Monitor event of such lines arrives with the next line, or after 250 ms of silence.
+- A command that lists a flag and its value as YAML list items (`- --requirepass` then `- <value>`) is not caught by these patterns; `docker compose config` output is covered by [strict commands](#strict-commands).
+
+## Literal block
+
+A `PreToolUse` hook, `hooks/block.js`, checks the text of every Bash and Monitor command before it runs. A command that holds a literal password does not run: the hook exits 2, and the model gets a two-line message that names the rule, shows how to read the value from a variable or a file, and never repeats the value. The hook rewrites nothing, so it works next to other `PreToolUse` hooks.
+
+```text
+[hush] blocked: literal password in the command (rule redis-cli). Read it from an environment variable or a file instead, for example: REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ..., or redis-cli -a "$REDIS_PASSWORD"
+[hush] Never write the value itself into a command. A public value can be allowed by its sha in allowLiterals; blockLiterals: false turns this check off.
+```
+
+| Rule | Blocked shape | The message suggests |
+|---|---|---|
+| `redis-cli` | `redis-cli -a <value>`, `--pass <value>` | `REDISCLI_AUTH`, or `-a "$REDIS_PASSWORD"` |
+| `requirepass` | `requirepass <value>`, `masterauth <value>` | `--requirepass "$REDIS_PASSWORD"` |
+| `password-flag` | `--password=<value>`, `--password <value>`, `--pass`, `--http-password` and the like | `--password="$DB_PASSWORD"` or a password file |
+| `mysql-p` | `-p<value>` after a MySQL or MariaDB tool | `MYSQL_PWD`, or `--defaults-extra-file` |
+| `sshpass` | `sshpass -p <value>` | `sshpass -e` with `SSHPASS`, or `sshpass -f` |
+| `curl-user` | `curl -u user:<value>`, `--user user:<value>` | `curl -u "user:$API_PASSWORD"`, or `--netrc-file` |
+| `authorization` | an `Authorization:` header with a literal token in a `curl` or `wget` command | `-H "Authorization: Bearer $API_TOKEN"`, or `-H @file` |
+| `env-password` | `PGPASSWORD=<value>`, `MYSQL_PWD=<value>`, `REDISCLI_AUTH=<value>`, `SSHPASS=<value>` | `PGPASSFILE`, or a variable |
+| `url-password` | `scheme://user:<value>@host` with any scheme | `${DB_PASSWORD}` in the URL, or a URL read from a file |
+
+The hook reads the command the way the shell does: it removes quotes, treats `$VAR`, `${...}`, `$(...)`, and backticks as substitutions, and also checks the text inside `$(...)`, inside quoted strings (`ssh host "..."`, `bash -c '...'`), heredocs, and comments. A finding needs a value of 6 or more characters. It does not block:
+
+- A substitution anywhere in the value: `-a "$REDIS_PASSWORD"`, `-u "user:$PASS"`, `"$(cat file)"`, also inside an inner quoted command.
+- A placeholder: `<password>`, `{{x}}`, `[hush ...]`, `xxx`, `***`, `...`, the words `changeme`, `password`, `secret`, `example`, `token`, and the like, any value that contains `example`, and an all-caps name with an underscore such as `REDIS_PASSWORD` (a variable written without `$`).
+- A file path such as `/etc/redis/redis.conf` or `scripts/deploy.sh`, so `grep requirepass /etc/redis` passes.
+- `psql --password <database>`: for `psql` and the other PostgreSQL tools `--password` takes no value.
+- A value whose sha8 is in `allow` or `allowLiterals`. The default `allowLiterals` holds the fingerprint of the well-known local Postgres and Supabase default password.
+
+A command that only mentions a shape for documentation, in an `echo` string or a heredoc, is blocked when the value position holds a literal of 6 or more characters that is not a placeholder: `echo 'redis-cli -a s3cr3tvalue'` is blocked, `echo 'redis-cli -a <password>'` is not. The message shows the sha8 only for a value of `minLength` characters or more.
+
+Set `"blockLiterals": false` in your config to turn the block off. The hook fails closed: when it cannot load the config, it blocks the command with `[hush] blocked: the literal password check failed (<error class>)`. An unparseable payload passes. Cost: one `node` start per Bash and Monitor call, about 26 ms (median of 20).
+
+The block cannot take a value back out of the transcript: the model wrote it into its tool call before the hook ran. It stops the command, so the value does not reach the process list, the shell history, or the output, and it teaches the model the variable form for the next command.
+
+## Strict commands
+
+Some commands print a whole configuration: every environment variable of a container, a Kubernetes secret, a dotenv file. For those, hush masks every value, not only the ones it can recognize, and keeps names and structure, so the model still sees which settings exist.
+
+`strictCommands` in the config is a list of regexes, run on the command text with flag `m`. The defaults:
+
+| Regex matches | For example |
+|---|---|
+| `docker` or `podman` `inspect`, also `container`, `image`, `network`, `volume inspect` | `docker inspect redis` |
+| `docker compose config`, `docker-compose config`, `podman-compose config` | `docker compose -f prod.yml config` |
+| bare `env` or `printenv` (no arguments), also after `sudo` | `env`, `env \| sort` |
+| bare `set` | `set` |
+| bare `export`, `declare`, `typeset`, with flags only | `export -p`, `declare -x` |
+| `clever env` | `clever env --add-export` |
+| `kubectl get` or `describe` of `secret` or `secrets` | `kubectl get secret db -o yaml` |
+| `systemctl show` with `Environment`, `systemctl show-environment` | `systemctl show app -p Environment` |
+| `cat`, `less`, `more`, `head`, `tail`, `bat` of a file named `.env*` | `cat next/.env.local` |
+| `ps` with a BSD-style option word that holds `e` | `ps auxe`, `ps eww 1` |
+| `/proc/<pid>/environ` | `cat /proc/1/environ` |
+| `history` | `history \| tail` |
+
+Your config's `strictCommands` are appended, for example `["\\bvault\\s+read\\b"]`.
+
+The output of a matching command gets these rules on top of the normal detection. A value is:
+
+- (a) the right-hand side of `NAME=value`: a whole line (also after `export`, `declare -x`, or a YAML `- `) to its end, a JSON string `"NAME=value"` to its closing quote, and elsewhere up to whitespace or a quote;
+- (b) a JSON or YAML string value whose key contains `pass`, `secret`, `token`, `key`, `auth`, `credential`, `dsn`, `cookie`, or `session` (any case), and every value in a `data:`, `stringData:`, `binaryData:` (Kubernetes secret, base64 values included), or `environment:` (Compose) block;
+- (c) in an argv list, a JSON array or YAML list under `Cmd`, `Entrypoint`, `Args`, `Test`, or `Command`, or a JSON array whose first element is `CMD` or `CMD-SHELL`: every element after the first that follows an element starting with `-` (unless it is itself a flag), the part after `=` of a `--flag=value` element, and in a `CMD-SHELL` string every word after a flag;
+- (d) any other word of 20 or more characters with high variety: at least three of lower case, upper case, digit, and other characters, one of them a digit. Not masked: `sha256:` digests, hex IDs, UUIDs, and MAC addresses (hex digits and separators only), timestamps, paths, image references, and URLs without credentials.
+
+A masked value reads `[hush strict sha:xxxxxxxx]`, or `[hush strict]` for a value shorter than `minLength` and for every (d) word, where a fingerprint of a guessed token would mislead. Bash output ends with one more line:
+
+```text
+[hush] strict mask: 8 value(s) masked; ask for one value by name if you need it
+```
+
+Both paths apply it. The `PostToolUse` hook reads the command from `tool_input.command` and masks `stdout` and `stderr` of a Bash call. The output filter gets the command from `wrap.sh`, which writes bash's `BASH_EXECUTION_STRING` (the `bash -c` string that Claude Code builds) as a header at the start of the stream; the filter takes the command out of its `eval '...'` part. Claude Code runs foreground Bash, background Bash, and Monitor commands this way (seen on 2.1.310), so a failing command, a Monitor event, and a background output file are masked too. Monitor events get no count line. Where the env file is not sourced (credential-scrubbed calls, the PowerShell tool), only successful Bash results are masked.
+
+On the test fixtures, the mask also hides values that are not secret: 4 of 10 in a `docker inspect`, 9 of 12 in `env` output, 2 of 6 in `docker compose config`, 0 of 3 in a Kubernetes secret. That is the price of a list that leaves nothing out.
 
 ## Output filter
 
@@ -60,7 +156,7 @@ Claude Code sources that file in the shell that runs each Bash and Monitor comma
 - Monitor events are redacted line by line, with no notice. A line is written as soon as it ends; a partial line after 250 ms of silence. `wrap.sh` tells the two apart by stdout: a regular file for Bash, a socket for Monitor.
 - The hook never truncates the file: it appends, keeps every line other hooks wrote, and writes nothing when its line is already there. A second copy of the line, from another copy of hush, does not start a second filter. In a resumed session it replaces a hush line with another plugin path, left by an older version.
 - Fails closed: if `node`, `wrap.sh`, or `filter.js` is missing, or the shell is not bash 4.1 or newer, the command does not run, the output is the one line above, and the exit code is 125. If the filter throws or dies, the output from then on is `[hush] output withheld: ...` and the exit code is 125.
-- Cost, measured as the median of 20 calls: about 30 ms added to a call with no output and about 37 ms to a call with 1 MB of output.
+- Cost, measured as the median of 20 calls: about 30 ms added to a call with no output and about 44 ms to a call with 1 MB of output.
 
 Limits of the filter:
 
@@ -93,13 +189,16 @@ Plugins load when a claude process starts: after installing or updating hush, re
 
 ## Config
 
-The defaults are in [`hush.default.json`](hush.default.json). Your file is `$HUSH_CONFIG` or `~/.config/hush/config.json`. Its `files`, `patterns`, and `allow` lists are appended to the defaults; its `minLength` replaces the default of 12.
+The defaults are in [`hush.default.json`](hush.default.json). Your file is `$HUSH_CONFIG` or `~/.config/hush/config.json`. Its `files`, `patterns`, `allow`, `allowLiterals`, and `strictCommands` lists are appended to the defaults; its `minLength` and `blockLiterals` replace the defaults (12 and `true`).
 
 ```json
 {
   "files": ["~/project/.env*", "~/project/secrets.json"],
   "patterns": [{ "name": "internal", "regex": "corp_[a-z0-9]{24}" }],
   "allow": ["1a2b3c4d"],
+  "allowLiterals": ["5e6f7a8b"],
+  "blockLiterals": true,
+  "strictCommands": ["\\bvault\\s+read\\b"],
   "minLength": 12
 }
 ```
@@ -110,6 +209,9 @@ The defaults are in [`hush.default.json`](hush.default.json). Your file is `$HUS
 | `patterns` | JavaScript regex source, run with flag `g`. With capture groups, only the first group is replaced. |
 | `allow` | sha8 fingerprints of public values to keep. |
 | `minLength` | Shortest known value to redact. |
+| `allowLiterals` | sha8 fingerprints of public literal values, such as a local database default: neither redacted nor blocked. Appended to the defaults. |
+| `blockLiterals` | `false` turns the [literal block](#literal-block) off. Default `true`. |
+| `strictCommands` | Regexes on the command text; a match turns on [strict masking](#strict-commands). Appended to the defaults. |
 
 How listed files are read:
 
@@ -123,7 +225,7 @@ How listed files are read:
 node /path/to/hush/scripts/check.js
 ```
 
-In a clone, `npm run check` runs the same script. It lists each listed file as exists or missing, with its value count, counts patterns, allow entries, and known values, and runs a self-test with a random fake token. It never prints a value.
+In a clone, `npm run check` runs the same script. It lists each listed file as exists or missing, with its value count, counts patterns, allow entries, and known values, and runs a self-test with a random fake token that covers a pattern, an argv pattern, the literal block, and strict masking. It never prints a value.
 
 ## Fails closed
 
