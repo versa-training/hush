@@ -18,7 +18,7 @@
 </tr>
 </table>
 
-**[What it does](#what-it-does) · [Output wrapper](#output-wrapper) · [Install](#install) · [Config](#config) · [Fails closed](#fails-closed) · [Limits](#limits) · [Development](#development)**
+**[What it does](#what-it-does) · [Output filter](#output-filter) · [Install](#install) · [Config](#config) · [Fails closed](#fails-closed) · [Limits](#limits) · [Development](#development)**
 
 </div>
 
@@ -44,30 +44,33 @@ hush finds secrets from two sources, in this order:
 | Known values | Values of `minLength` characters or more from the files you list, longest first. |
 | Patterns | Env-style assignments, JWTs, database URL passwords, DSNs, PEM private keys, Bearer headers, and GitHub, Anthropic, OpenAI, AWS, Google, Slack, and Stripe tokens. |
 
-## Output wrapper
+## Output filter
 
-Claude Code lets a `PostToolUse` hook replace the output of a successful call only. A Bash command that exits non-zero, a Monitor event, and the output file of a background command never pass through it. So a second hook, `hooks/wrap.js` on `PreToolUse` for `Bash|Monitor`, rewrites the command to:
+Claude Code lets a `PostToolUse` hook replace the output of a successful call only. A Bash command that exits non-zero, a Monitor event, and the output file of a background command never pass through it. So hush also filters Bash and Monitor output at the source, without changing the command.
+
+A `SessionStart` hook, `hooks/session-start.js`, runs for every source (`startup`, `resume`, `clear`, `compact`) and appends one line to the file named by `CLAUDE_ENV_FILE`:
 
 ```text
-. '<plugin>/hooks/wrap.sh' <nonce> bash || { printf '%s\n' '[hush] output withheld: wrapper unavailable'; exit 125; }
-<the original command, byte for byte>
+[ "${__hush_on-}" = "$$" ] || . '<plugin>/hooks/wrap.sh' || { printf '%s\n' '[hush] output withheld: wrapper unavailable'; exit 125; } # hush output filter
 ```
 
-`wrap.sh` runs in the shell that runs the command. It sends that shell's stdout and stderr through `hooks/filter.js`, which redacts each line with the same known values, patterns, allow list, and placeholders as the `PostToolUse` hook. At exit it waits until the filter has written everything. The command itself runs unchanged in the same shell, so its exit code, `cd`, `set -e`, heredocs, quotes, comments, `exit`, and `&` jobs behave as before.
+Claude Code sources that file in the shell that runs each Bash and Monitor command, before the command, also in subagents and in sessions started in a worktree. `wrap.sh` sends that shell's stdout and stderr through `hooks/filter.js`, which redacts each line with the same known values, patterns, allow list, and placeholders as the `PostToolUse` hook. At exit it waits until the filter has written everything. The command text stays as the model wrote it, so other `PreToolUse` hooks that rewrite commands and permission rules see and match the original command, and its exit code, `cd`, `set -e`, heredocs, quotes, comments, `exit`, and `&` jobs behave as before.
 
 - Bash output ends with `[hush] redacted N secret(s)` when the filter redacted something. The `PostToolUse` hook then finds nothing left and adds nothing.
-- Monitor events are redacted line by line, with no notice. A line is written as soon as it ends; a partial line after 250 ms of silence.
-- Fails closed: if `node` or `filter.js` is missing, the command does not run, the output is the one line above, and the exit code is 125. If the filter throws or dies, the output from then on is `[hush] output withheld: ...` and the exit code is 125.
-- Cost, measured as the median of 20 calls: about 30 ms added to a call with no output and about 36 ms to a call with 1 MB of output.
+- Monitor events are redacted line by line, with no notice. A line is written as soon as it ends; a partial line after 250 ms of silence. `wrap.sh` tells the two apart by stdout: a regular file for Bash, a socket for Monitor.
+- The hook never truncates the file: it appends, keeps every line other hooks wrote, and writes nothing when its line is already there. A second copy of the line, from another copy of hush, does not start a second filter. In a resumed session it replaces a hush line with another plugin path, left by an older version.
+- Fails closed: if `node`, `wrap.sh`, or `filter.js` is missing, or the shell is not bash 4.1 or newer, the command does not run, the output is the one line above, and the exit code is 125. If the filter throws or dies, the output from then on is `[hush] output withheld: ...` and the exit code is 125.
+- Cost, measured as the median of 20 calls: about 30 ms added to a call with no output and about 37 ms to a call with 1 MB of output.
 
-Limits of the wrapper:
+Limits of the filter:
 
+- It starts with the next session: the hook has to run before the first command. When `CLAUDE_ENV_FILE` is not set or the hook fails, the session shows a `[hush]` message and only successful tool results are redacted.
+- Claude Code does not source the env file for commands it runs with credential variables scrubbed (`scrubCredentialEnv`, used when a remote session runs commands on this machine) or for the PowerShell tool. There only successful results are redacted. For PowerShell, Claude Code takes variables from the env file only when every line is a plain assignment, so the hush line also drops the variables that other hooks set there.
 - stdout and stderr arrive merged, in the order written. Claude Code merges them for Bash anyway.
 - NUL bytes are dropped and invalid UTF-8 becomes U+FFFD.
-- Bash error messages name a line two higher than without the wrapper, and `$!` before the first `&` job holds the filter's starter pid instead of being empty.
+- Bash messages and `$LINENO` name a line one higher than without an env file, as with any one-line env file. `$!` before the first `&` job holds the filter's starter pid instead of being empty.
 - A line longer than 64 KB is cut at a space where it can be, keeping its last 4 KB for the next part. A value longer than 4 KB that crosses a cut is split. A PEM private key block is held until its end line, up to 64 KB.
-- A command that sets its own `EXIT` trap or ends with `exec` returns before the filter is done: the model gets the output only partly or not at all. What arrives later in the output file is redacted.
-- When another `PreToolUse` hook also returns `updatedInput` for the same call, the hook that finishes last wins and the other rewrite is lost. Hooks run in parallel and each gets the original input.
+- A command that sets its own `EXIT` trap or ends with `exec` returns before the filter is done: the model gets the output only partly or not at all, never unredacted. What arrives later in the output file is redacted.
 
 ## Install
 
