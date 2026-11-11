@@ -26,8 +26,14 @@ const KEEP = 4096;
 // A match that runs from the start of a long line to its end holds the line
 // until it reaches this size; then the line is cut anyway.
 const HARD = CAP * 16;
-// A partial line with no newline is written after this much idle time.
+// After this much idle time, a partial line with no newline is written up
+// to its last whitespace. Its last word is written too when it is shorter
+// than SHORT characters and cannot start a known value; else it is held
+// until HOLD_MS after the last write. An open PEM block and a run of argv
+// lines stay held until more output, the end of the command, or CAP.
 const IDLE_MS = Number(process.env.HUSH_FILTER_IDLE_MS || 250);
+const HOLD_MS = Number(process.env.HUSH_FILTER_HOLD_MS || 3000);
+const SHORT = 6;
 const PEM_OPEN = /-----BEGIN [A-Z ]*PRIVATE KEY-----(?![\s\S]*-----END [A-Z ]*PRIVATE KEY-----)/;
 
 // A pretty-printed JSON string array puts each element on its own line, so a
@@ -62,6 +68,13 @@ let pending = '';
 let lastChar = '\n';
 let marked = false;
 let idle = null;
+let hold = null;
+// The current line, when a part of it was written at idle: its raw text, the
+// text written for it, and the counts taken for it. The rest of the line is
+// redacted together with it, and only the new part is written.
+let line = '';
+let lineOut = '';
+let lineCounts = {};
 let headed = false;
 let strict = null;
 
@@ -79,23 +92,50 @@ try {
   ctx = { cfg, known, compiled: compile(cfg), index: buildKnown(known, cfg) };
 } catch (e) { withhold(e); }
 
-function emit(text) {
+const red = (text) => redact(text, ctx.cfg, ctx.known, ctx.compiled, ctx.index);
+
+// Redacts text after the part of the current line already written, writes
+// what is new. final: the end of the output, nothing more joins this line.
+function emit(text, final = false) {
   if (!text || failed) return;
-  const r = redact(text, ctx.cfg, ctx.known, ctx.compiled, ctx.index);
-  for (const [k, n] of Object.entries(r.counts)) { counts[k] = (counts[k] || 0) + n; total += n; }
-  const out = strict ? strict.text(r.text) : r.text;
-  writeAll(OUT, out);
-  lastChar = out[out.length - 1];
+  const full = line + text;
+  const r = red(full);
+  for (const [k, n] of Object.entries(r.counts)) {
+    const d = n - (lineCounts[k] || 0);
+    if (d > 0) { counts[k] = (counts[k] || 0) + d; total += d; }
+  }
+  const rawTail = full.slice(full.lastIndexOf('\n') + 1);
+  const keep = !final && rawTail.length > 0 && rawTail.length <= KEEP;
+  let out = r.text;
+  if (strict) {
+    // A partial line is masked on a copy of the state: it is masked again
+    // with the rest of its line.
+    const nl = out.lastIndexOf('\n') + 1;
+    out = strict.text(out.slice(0, nl)) + (keep ? strict.clone().text(out.slice(nl)) : strict.text(out.slice(nl)));
+  }
+  let k = 0;
+  if (lineOut) {
+    if (out.startsWith(lineOut)) k = lineOut.length;
+    else while (k < lineOut.length && out[k] === lineOut[k]) k++;
+  }
+  const add = out.slice(k);
+  if (add) { writeAll(OUT, add); lastChar = add[add.length - 1]; }
+  line = keep ? rawTail : '';
+  lineOut = keep ? out.slice(out.lastIndexOf('\n') + 1) : '';
+  lineCounts = keep ? red(line).counts : {};
 }
 
 // Writes every complete line of pending, holding an open PEM block; cuts an overlong line.
 function drain(all) {
   if (failed) { pending = ''; return; }
-  if (all) { emit(pending); pending = ''; return; }
-  let end = pending.lastIndexOf('\n') + 1;
-  const pem = PEM_OPEN.exec(pending.slice(0, end));
+  if (all) { emit(pending, true); pending = ''; line = ''; lineOut = ''; lineCounts = {}; return; }
+  // Holds are found in the current line and pending together.
+  const view = line + pending;
+  let end = view.lastIndexOf('\n') + 1;
+  const pem = PEM_OPEN.exec(view.slice(0, end));
   if (pem && pending.length < CAP) end = pem.index;
-  else if (pending.length < CAP) end = holdArgv(pending, end);
+  else if (pending.length < CAP) end = holdArgv(view, end);
+  end = Math.max(0, end - line.length);
   if (end > 0) { emit(pending.slice(0, end)); pending = pending.slice(end); }
   if (pending.length >= CAP) {
     const headEnd = pending.length - KEEP;
@@ -109,6 +149,47 @@ function drain(all) {
     emit(pending.slice(0, cut));
     pending = pending.slice(cut);
   }
+}
+
+// IDLE_MS after the last write: writes what may go out of a partial line.
+function onIdle() {
+  if (failed || !pending) return;
+  const view = line + pending;
+  let end = view.length;
+  const pem = PEM_OPEN.exec(view);
+  if (pem) end = pem.index;
+  else {
+    const nl = view.lastIndexOf('\n') + 1;
+    const arg = holdArgv(view, nl);
+    if (arg < nl) end = arg;
+    else {
+      const ws = view.search(/\s\S*$/) + 1;
+      if (ws < view.length && !harmless(view.slice(ws))) end = ws;
+    }
+  }
+  end = Math.max(0, end - line.length);
+  if (end > 0) { emit(pending.slice(0, end)); pending = pending.slice(end); }
+  if (pending && !pem) hold = setTimeout(() => { try { onHold(); } catch (e) { withhold(e); } }, Math.max(0, HOLD_MS - IDLE_MS));
+}
+
+// HOLD_MS after the last write: writes everything but an open PEM block.
+function onHold() {
+  if (failed || !pending) return;
+  const view = line + pending;
+  const pem = PEM_OPEN.exec(view);
+  const end = pem ? Math.max(0, pem.index - line.length) : pending.length;
+  if (end > 0) { emit(pending.slice(0, end)); pending = pending.slice(end); }
+}
+
+// True when a trailing word may be written before the rest of it arrives:
+// it is shorter than SHORT characters (the shortest value a password
+// argument pattern takes), and no known value starts with an end of it.
+function harmless(word) {
+  if (word.length >= SHORT) return false;
+  for (const { value } of ctx.known) {
+    for (let n = 1; n <= word.length; n++) if (value.startsWith(word.slice(-n))) return false;
+  }
+  return true;
 }
 
 // [start, end) of every known value, pattern match, and (strict mode) long word in text.
@@ -182,10 +263,12 @@ process.stdin.on('data', (chunk) => {
     drain(false);
   } catch (e) { withhold(e); }
   clearTimeout(idle);
-  if (pending) idle = setTimeout(() => { try { drain(true); } catch (e) { withhold(e); } }, IDLE_MS);
+  clearTimeout(hold);
+  if (pending) idle = setTimeout(() => { try { onIdle(); } catch (e) { withhold(e); } }, IDLE_MS);
 });
 process.stdin.on('end', () => {
   clearTimeout(idle);
+  clearTimeout(hold);
   try {
     pending += dec.end();
     if (!headed && !header()) pending = '';

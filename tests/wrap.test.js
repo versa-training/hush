@@ -291,6 +291,68 @@ test('a line longer than the cut size, no whitespace anywhere: a known value or 
   }
 });
 
+test('pauses longer than the 250 ms idle time: a value written in two parts 0.5 s and 2 s apart is redacted whole', async () => {
+  const known = path.join(tmp, 'idle-known.env');
+  const cfg = path.join(tmp, 'idle-cfg.json');
+  fs.writeFileSync(cfg, JSON.stringify({ files: [known] }));
+  for (const gap of [500, 2000]) {
+    const v = hex(24);
+    for (const [a, b, ph] of [[`out ${v.slice(0, 20)}`, `${v.slice(20)} end\n`, `[hush IDLE_SECRET sha:${sha8(v)}]`],
+      [`X_TOK`, `EN=${v}\n`, `X_TOKEN=[hush env sha:${sha8(v)}]`],
+      [`X_TOKEN=${v.slice(0, 10)}`, `${v.slice(10)}\n`, `X_TOKEN=[hush env sha:${sha8(v)}]`],
+      ['redis-cli -h cache -a ', `${v} ping\n`, `-a [hush redis-cli-a sha:${sha8(v)}] ping`]]) {
+      fs.writeFileSync(known, `IDLE_SECRET=${ph.includes('IDLE_SECRET') ? v : hex(24)}\n`);
+      const out = await filterAlone([a, gap, b], { HUSH_CONFIG: cfg });
+      assert.ok(!out.includes(v.slice(0, 10)) && !out.includes(v.slice(-10)), `${gap} ms: ${JSON.stringify(a.slice(0, 12))}`);
+      assert.ok(out.includes(ph), `${gap} ms: ${out.replace(v, '<v>')}`);
+    }
+  }
+  const v = hex(24);
+  const r = sh(`printf 'X_TOKEN=${v.slice(0, 20)}'; sleep 0.5; printf '${v.slice(20)}\\n'`);
+  assert.equal(r.status, 0);
+  assert.ok(!text(r).includes(v.slice(0, 20)) && text(r).startsWith(`X_TOKEN=[hush env sha:${sha8(v)}]\n`));
+});
+
+test('pauses longer than the 250 ms idle time: a PEM block with a 0.5 s pause in its body and a pretty-printed Redis argv with a pause between the lines', async () => {
+  const body = crypto.randomBytes(300).toString('base64').match(/.{1,64}/g);
+  const head = ['-----BEGIN', 'PRIVATE', 'KEY-----'].join(' ');
+  const tail = ['-----END', 'PRIVATE', 'KEY-----'].join(' ');
+  for (const writes of [[`${head}\n${body.slice(0, 2).join('\n')}\n`, 500, `${body.slice(2).join('\n')}\n${tail}\n`],
+    ['-----BEG', 500, `IN PRIVATE KEY-----\n${body.join('\n')}`, 500, `\n${tail}\n`]]) {
+    const out = await filterAlone(writes);
+    assert.ok(!body.some((l) => out.includes(l)), 'PEM body leaked');
+    assert.match(out, /\[hush pem sha:/);
+  }
+  const pw = hex(16);
+  const out = await filterAlone(['[\n    "redis-cli",\n    "-a",\n', 600, `    "${pw}",\n`, 600, '    "ping"\n]\n']);
+  assert.ok(!out.includes(pw));
+  assert.match(out, /"-a",\n {4}"\[hush argv-redis-cli sha:/);
+});
+
+test('a partial line without newline arrives within a bounded time: a short last word at the 250 ms idle, any other within 3 s of the last write', async () => {
+  const p = spawn('node', [FILTER, 'pg', 'monitor'], { stdio: ['pipe', 'pipe', 'inherit', 'pipe'], env: ENV });
+  let out = '';
+  const seen = [];
+  const t0 = Date.now();
+  p.stdio[3].on('data', (d) => { out += d; seen.push([out, Date.now() - t0]); });
+  const at = (s) => (seen.find(([o]) => o.includes(s)) || [null, Infinity])[1];
+  const closed = new Promise((res) => p.on('close', res));
+  try {
+    p.stdin.write('Downloading 45%');
+    await new Promise((res) => setTimeout(res, 800));
+    assert.ok(at('Downloading 45%') < 700, `short word after ${at('Downloading 45%')} ms`);
+    const t1 = Date.now() - t0;
+    p.stdin.write('\rwaiting for the server...');
+    await new Promise((res) => setTimeout(res, 3600));
+    assert.ok(at('waiting for the ') - t1 < 700, 'text before the last word at idle');
+    const late = at('server...') - t1;
+    assert.ok(late >= 2500 && late < 3500, `long last word after ${late} ms`);
+  } finally {
+    p.stdin.end('\0HUSH:pg\0');
+    await closed;
+  }
+});
+
 test('a 3 MB run of letters with no newline does not stall', () => {
   const t0 = Date.now();
   const r = sh('head -c 3000000 /dev/zero | tr "\\0" "b"');

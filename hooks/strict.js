@@ -85,6 +85,13 @@ class Strict {
     this.block = null;
   }
 
+  // A copy of the state, to mask a partial line without advancing the state.
+  clone() {
+    const c = Object.assign(Object.create(Strict.prototype), this);
+    for (const k of ['arr', 'yarr', 'block']) if (this[k]) c[k] = { ...this[k] };
+    return c;
+  }
+
   mask(v, heuristic = false) {
     if (!v || v.startsWith('[hush')) return v;
     this.count++;
