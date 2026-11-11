@@ -10,7 +10,13 @@ for (const f of files) console.log(`${f.path}: ${f.exists ? 'exists' : 'missing'
 console.log(`patterns: ${cfg.patterns.length}, allow: ${cfg.allow.length}, known values: ${values.length}`);
 
 const fake = crypto.randomBytes(24).toString('hex');
-const out = redact(`HUSH_SELFTEST_TOKEN=${fake}`, cfg, values).text;
-const ok = !out.includes(fake);
-console.log(`self-test: ${ok ? 'ok' : 'FAILED'}`);
-process.exit(ok ? 0 : 1);
+const checks = {
+  pattern: () => !redact(`HUSH_SELFTEST_TOKEN=${fake}`, cfg, values).text.includes(fake)
+    && !redact(`["redis-cli", "-a", "${fake}", "ping"]`, cfg, values).text.includes(fake),
+  block: () => require('../hooks/literal').findLiterals(`redis-cli -a ${fake} ping`, cfg, new Set()).length === 1
+    && require('../hooks/literal').findLiterals('redis-cli -a "$REDIS_PASSWORD" ping', cfg, new Set()).length === 0,
+};
+const failed = Object.entries(checks).filter(([, f]) => { try { return !f(); } catch { return true; } }).map(([k]) => k);
+console.log(`blockLiterals: ${cfg.blockLiterals !== false}, allowLiterals: ${(cfg.allowLiterals || []).length}`);
+console.log(`self-test: ${failed.length ? `FAILED (${failed.join(', ')})` : 'ok'}`);
+process.exit(failed.length ? 1 : 0);

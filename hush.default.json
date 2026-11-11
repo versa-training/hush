@@ -3,6 +3,7 @@
   "minLength": 12,
   "allow": [],
   "allowLiterals": ["a942b37c"],
+  "blockLiterals": true,
   "patterns": [
     {"name": "env", "regex": "(?<![A-Za-z0-9_])[A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|DSN|CREDENTIAL|AUTH|key|token|secret|password|passwd|dsn|credential|auth)[A-Za-z0-9_]*[\"']?\\s*[=:]\\s*[\"']?(?!\\$[A-Za-z_{(])([^\\s\"',;]{12,})"},
     {"name": "jwt", "regex": "eyJ[A-Za-z0-9_-]{5,}\\.eyJ[A-Za-z0-9_-]{5,}\\.[A-Za-z0-9_-]{5,}"},
