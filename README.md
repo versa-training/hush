@@ -63,11 +63,12 @@ Fifteen patterns find a password given as a command argument, in any output: a s
 
 - A value must have 6 or more characters. One that starts with `$`, a backtick, `[`, or `<` is left alone (after a flag also one that starts with `-`), so `-a "$REDIS_PASSWORD"`, `${VAR}`, `$(cat file)`, and hush's own placeholders stay as they are. The `env` and URL password patterns also leave `$VAR`, `${VAR}`, and `$(...)` alone.
 - The output filter sends each line as soon as it ends, but a pretty-printed JSON array puts a flag and its value on separate lines. So the filter holds a run of lines that are JSON string elements followed by a comma until a line that is not one arrives, and redacts the run together with that line, up to 64 KB. A Monitor event of such lines arrives with the next line, or after 250 ms of silence.
+- `url-password-any`, `requirepass`, and `pass-flag` keep a value that is a placeholder or a file path, by the same rules as the [literal block](#literal-block): `https://user:password@host`, `--password <password>`, `requirepass foobared` (the default in the `redis.conf` that Redis ships), `grep requirepass /etc/redis`. A pattern in your config gets the same rule with `"skipPlaceholders": true`.
 - A command that lists a flag and its value as YAML list items (`- --requirepass` then `- <value>`) is not caught by these patterns; `docker compose config` output is covered by [strict commands](#strict-commands).
 
 ## Literal block
 
-A `PreToolUse` hook, `hooks/block.js`, checks the text of every Bash and Monitor command before it runs. A command that holds a literal password does not run: the hook exits 2, and the model gets a two-line message that names the rule, shows how to read the value from a variable or a file, and never repeats the value. The hook rewrites nothing, so it works next to other `PreToolUse` hooks.
+A `PreToolUse` hook, `hooks/block.js`, checks the text of every Bash and Monitor command before it runs. A command that holds a literal password does not run: the hook exits 2, and the model gets a two-line message (three when the command writes a file, below) that names the rule, shows how to read the value from a variable or a file, and never repeats the value. The hook rewrites nothing, so it works next to other `PreToolUse` hooks.
 
 ```text
 [hush] blocked: literal password in the command (rule redis-cli). Read it from an environment variable or a file instead, for example: REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ..., or redis-cli -a "$REDIS_PASSWORD"
@@ -83,7 +84,10 @@ A `PreToolUse` hook, `hooks/block.js`, checks the text of every Bash and Monitor
 | `sshpass` | `sshpass -p <value>` | `sshpass -e` with `SSHPASS`, or `sshpass -f` |
 | `curl-user` | `curl -u user:<value>`, `--user user:<value>` | `curl -u "user:$API_PASSWORD"`, or `--netrc-file` |
 | `authorization` | an `Authorization:` header with a literal token in a `curl` or `wget` command | `-H "Authorization: Bearer $API_TOKEN"`, or `-H @file` |
-| `env-password` | `PGPASSWORD=<value>`, `MYSQL_PWD=<value>`, `REDISCLI_AUTH=<value>`, `SSHPASS=<value>` | `PGPASSFILE`, or a variable |
+| `env-password` | `NAME=<value>` where `NAME` contains `PASSWORD`, `PASSWD`, `TOKEN`, `SECRET`, `API_KEY`, `APIKEY`, or `AUTH` (not `AUTHOR`), and `PGPASSWORD`, `MYSQL_PWD`, `REDISCLI_AUTH`, `SSHPASS`: inline before a command, after `env` or `export`, and in `docker run -e`, `--env`, `--env=`. Not a name ending in a setting word such as `_FILE`, `_PATH`, `_URL`, `_HOST`, `_USER`, `_NAME`, `_PROVIDER`, `_ID` | `PGPASSFILE`, or a variable |
+| `conn-password` | `password=<value>`, `passwd=`, `pwd=` in a connection string, such as `psql "host=db password=<value>"` | a `PGPASSFILE` or `~/.pgpass`, or a variable |
+| `redis-auth` | `redis-cli ... AUTH <value>` and `AUTH <user> <value>` | `AUTH "$REDIS_PASSWORD"`, or `REDISCLI_AUTH` |
+| `httpie-auth` | `http -a user:<value>`, `--auth`, also `https`, `xh`, `xhs` | `http -a "user:$API_PASSWORD"`, or `~/.netrc` |
 | `url-password` | `scheme://user:<value>@host` with any scheme | `${DB_PASSWORD}` in the URL, or a URL read from a file |
 
 The hook reads the command the way the shell does: it removes quotes, treats `$VAR`, `${...}`, `$(...)`, and backticks as substitutions, and also checks the text inside `$(...)`, inside quoted strings (`ssh host "..."`, `bash -c '...'`), heredocs, and comments. A finding needs a value of 6 or more characters. It does not block:
@@ -93,10 +97,15 @@ The hook reads the command the way the shell does: it removes quotes, treats `$V
 - A file path such as `/etc/redis/redis.conf` or `scripts/deploy.sh`, so `grep requirepass /etc/redis` passes.
 - `psql --password <database>`: for `psql` and the other PostgreSQL tools `--password` takes no value.
 - A value whose sha8 is in `allow` or `allowLiterals`. The default `allowLiterals` holds the fingerprint of the well-known local Postgres and Supabase default password.
+- Prose: an all-lowercase word (letters only) in the value position, inside a quoted message with spaces, given to `echo`, `printf`, `git commit -m`, `git tag -m`, or `gh pr create --title`/`--body`. So `git commit -m "feat: support --password option in cli"` passes, and `git commit -m "fix: redis-cli -a <mixed value>"` is still blocked.
 
-A command that only mentions a shape for documentation, in an `echo` string or a heredoc, is blocked when the value position holds a literal of 6 or more characters that is not a placeholder: `echo 'redis-cli -a s3cr3tvalue'` is blocked, `echo 'redis-cli -a <password>'` is not. The message shows the sha8 only for a value of `minLength` characters or more.
+A command that only mentions a shape for documentation, in an `echo` string or a heredoc, is blocked when the value position holds a literal of 6 or more characters that is not a placeholder: `echo 'redis-cli -a s3cr3tvalue'` is blocked, `echo 'redis-cli -a <password>'` is not. The message shows the sha8 only for a value of `minLength` characters or more. When the blocked command writes a file (a redirection to a path, or `tee`), the message has a third line:
 
-Set `"blockLiterals": false` in your config to turn the block off. The hook fails closed: when it cannot load the config, it blocks the command with `[hush] blocked: the literal password check failed (<error class>)`. An unparseable payload passes. Cost: one `node` start per Bash and Monitor call, about 26 ms (median of 20).
+```text
+[hush] Example code with a sample credential can be written to a file with the Write tool, or with a placeholder such as changeme.
+```
+
+Set `"blockLiterals": false` in your config to turn the block off. The hook fails closed: when it cannot load the config, it blocks the command with a message that names the file and the step to recover, never a value, for example `[hush] blocked: the literal password check failed (SyntaxError in ~/.config/hush/config.json). Fix or remove ~/.config/hush/config.json, then run node <plugin>/scripts/check.js.`; the Edit and Write tools are not blocked by it. An unparseable payload passes. Cost: one `node` start per Bash and Monitor call, about 28 ms (median of 20).
 
 The block cannot take a value back out of the transcript: the model wrote it into its tool call before the hook ran. It stops the command, so the value does not reach the process list, the shell history, or the output, and it teaches the model the variable form for the next command.
 
@@ -108,15 +117,16 @@ Some commands print a whole configuration: every environment variable of a conta
 
 | Regex matches | For example |
 |---|---|
-| `docker` or `podman` `inspect`, also `container`, `image`, `network`, `volume inspect` | `docker inspect redis` |
+| `docker` or `podman` `inspect`, also `container`, `image`, `network`, `volume inspect`, also after global options | `docker inspect redis`, `docker --context prod inspect app` |
 | `docker compose config`, `docker-compose config`, `podman-compose config` | `docker compose -f prod.yml config` |
-| bare `env` or `printenv` (no arguments), also after `sudo` | `env`, `env \| sort` |
+| bare `env` or `printenv` (no arguments), also as `/usr/bin/env` or `/bin/env`, after `sudo` or `command` | `env`, `env \| sort`, `command env` |
+| bare `env` or `printenv` run in a container or pod with `docker exec`, `docker run`, `podman`, or `kubectl exec ... --` | `docker exec app env`, `kubectl exec app -- printenv` |
 | bare `set` | `set` |
 | bare `export`, `declare`, `typeset`, with flags only | `export -p`, `declare -x` |
 | `clever env` | `clever env --add-export` |
 | `kubectl get` or `describe` of `secret` or `secrets` | `kubectl get secret db -o yaml` |
 | `systemctl show` with `Environment`, `systemctl show-environment` | `systemctl show app -p Environment` |
-| `cat`, `less`, `more`, `head`, `tail`, `bat` of a file named `.env*` | `cat next/.env.local` |
+| `cat`, `less`, `more`, `head`, `tail`, `bat`, `grep`, `rg`, `sed`, `awk` of a file named `.env*`, except `.env.example`, `.env.sample`, and `.env.template` | `cat next/.env.local`, `grep TOKEN .env` |
 | `ps` with a BSD-style option word that holds `e` | `ps auxe`, `ps eww 1` |
 | `/proc/<pid>/environ` | `cat /proc/1/environ` |
 | `history` | `history \| tail` |
@@ -147,16 +157,18 @@ Claude Code lets a `PostToolUse` hook replace the output of a successful call on
 A `SessionStart` hook, `hooks/session-start.js`, runs for every source (`startup`, `resume`, `clear`, `compact`) and appends one line to the file named by `CLAUDE_ENV_FILE`:
 
 ```text
-[ "${__hush_on-}" = "$$" ] || . '<plugin>/hooks/wrap.sh' || { printf '%s\n' '[hush] output withheld: wrapper unavailable'; exit 125; } # hush output filter
+[ "${__hush_on-}" = "$$" ] || . '<plugin>/hooks/wrap.sh' || { printf '%s\n' '[hush] output withheld: wrapper unavailable: <plugin>/hooks/wrap.sh did not start the output filter. If hush was updated, moved, or removed, restart the claude process. Else check that node 22 or newer is on PATH and run node <plugin>/scripts/check.js'; exit 125; } # hush output filter
 ```
 
 Claude Code sources that file in the shell that runs each Bash and Monitor command, before the command, also in subagents and in sessions started in a worktree. `wrap.sh` sends that shell's stdout and stderr through `hooks/filter.js`, which redacts each line with the same known values, patterns, allow list, and placeholders as the `PostToolUse` hook. At exit it waits until the filter has written everything. The command text stays as the model wrote it, so other `PreToolUse` hooks that rewrite commands and permission rules see and match the original command, and its exit code, `cd`, `set -e`, heredocs, quotes, comments, `exit`, and `&` jobs behave as before.
 
 - Bash output ends with `[hush] redacted N secret(s)` when the filter redacted something. The `PostToolUse` hook then finds nothing left and adds nothing.
-- Monitor events are redacted line by line, with no notice. A line is written as soon as it ends; a partial line after 250 ms of silence. `wrap.sh` tells the two apart by stdout: a regular file for Bash, a socket for Monitor.
+- Monitor events are redacted line by line, with no notice. A line is written as soon as it ends. `wrap.sh` tells the two apart by stdout: a regular file for Bash, a socket for Monitor.
+- A partial line, with no newline yet, waits for 250 ms of silence. Then it is written up to its last space; its last word too when that word is shorter than 6 characters and no known value starts with an end of it. Any other last word is written 3 s after the last write. An open PEM private key block and a run of JSON argv lines stay held until more output arrives or the command ends. When the rest of a line arrives later, it is redacted together with the part already written, so a value split by a pause is still caught; only the part written before the pause is visible.
 - The hook never truncates the file: it appends, keeps every line other hooks wrote, and writes nothing when its line is already there. A second copy of the line, from another copy of hush, does not start a second filter. In a resumed session it replaces a hush line with another plugin path, left by an older version.
-- Fails closed: if `node`, `wrap.sh`, or `filter.js` is missing, or the shell is not bash 4.1 or newer, the command does not run, the output is the one line above, and the exit code is 125. If the filter throws or dies, the output from then on is `[hush] output withheld: ...` and the exit code is 125.
-- Cost, measured as the median of 20 calls: about 30 ms added to a call with no output and about 44 ms to a call with 1 MB of output.
+- Needs bash 4.1 or newer. The hook finds the shell the way Claude Code does (`CLAUDE_CODE_SHELL` when it names bash or zsh, else `$SHELL`, else bash or zsh from `PATH` and the usual directories) and runs it once. For zsh, macOS `/bin/bash` 3.2, or any other shell it writes no line, removes an old hush line, and shows `[hush] output filter off: ...` with the reason; then only successful tool results are redacted. To turn the filter on, set `CLAUDE_CODE_SHELL` to bash 4.1 or newer and restart claude. `wrap.sh` sourced by such a shell anyway sets up nothing and returns, so commands run as without hush.
+- Fails closed: if `node`, `wrap.sh`, or `filter.js` is missing, the command does not run, the output is the line above with the path of `wrap.sh` and the recovery (restart the claude process after hush was updated, moved, or removed; else check `node` and run `scripts/check.js`), and the exit code is 125. If the filter throws or dies, the output from then on is `[hush] output withheld: ...` with the file at fault and the recovery step, and the exit code is 125.
+- Cost, measured as the median of 20 calls: about 31 ms added to a call with no output and about 46 ms to a call with 1 MB of output.
 
 Limits of the filter:
 
@@ -165,7 +177,12 @@ Limits of the filter:
 - stdout and stderr arrive merged, in the order written. Claude Code merges them for Bash anyway.
 - NUL bytes are dropped and invalid UTF-8 becomes U+FFFD.
 - Bash messages and `$LINENO` name a line one higher than without an env file, as with any one-line env file. `$!` before the first `&` job holds the filter's starter pid instead of being empty.
-- A line longer than 64 KB is cut at a space where it can be, keeping its last 4 KB for the next part. A value longer than 4 KB that crosses a cut is split. A PEM private key block is held until its end line, up to 64 KB.
+- A line longer than 64 KB is cut at a space where it can be, keeping its last 4 KB for the next part. The cut never falls inside a known value or a pattern match: it moves to the start of the match, or after a match that starts the line. A match that runs from the start of the held text to its end holds the line up to 1 MB; past that the line is cut anyway. A PEM private key block is held until its end line, up to 64 KB.
+- A pause in a partial line: the part written before the pause stays visible, at most a word shorter than 6 characters, or any word after 3 s. The rest is redacted when it arrives.
+- A value split by ANSI color codes or by `\r` is two words: each half is checked on its own, and halves shorter than a pattern needs stay visible.
+- stdout of a Bash command is a FIFO instead of the regular file it is without hush, so `[ -f /dev/stdout ]` and `stat` of fd 1 differ.
+- The shell must be bash 4.1 or newer, see above.
+- A session started before hush moved or was removed keeps the old line in its env file: every command then prints the wrapper message and exits 125 until the claude process restarts. The next `SessionStart` replaces the line.
 - A command that sets its own `EXIT` trap or ends with `exec` returns before the filter is done: the model gets the output only partly or not at all, never unredacted. What arrives later in the output file is redacted.
 
 ## Install
@@ -205,8 +222,8 @@ The defaults are in [`hush.default.json`](hush.default.json). Your file is `$HUS
 
 | Key | Meaning |
 |---|---|
-| `files` | Files to read known values from. `~` and `*` within one path segment work. A missing file is skipped. |
-| `patterns` | JavaScript regex source, run with flag `g`. With capture groups, only the first group is replaced. |
+| `files` | Files to read known values from. `~` and `*` within one path segment work. A missing file, a directory, and a broken symlink are skipped. Any other read error, such as a file hush may not read, fails closed with a message that names the file. |
+| `patterns` | JavaScript regex source, run with flag `g`. With capture groups, only the first group is replaced. `"skipPlaceholders": true` keeps a value that is a placeholder or a file path. |
 | `allow` | sha8 fingerprints of public values to keep. |
 | `minLength` | Shortest known value to redact. |
 | `allowLiterals` | sha8 fingerprints of public literal values, such as a local database default: neither redacted nor blocked. Appended to the defaults. |
@@ -225,7 +242,7 @@ How listed files are read:
 node /path/to/hush/scripts/check.js
 ```
 
-In a clone, `npm run check` runs the same script. It lists each listed file as exists or missing, with its value count, counts patterns, allow entries, and known values, and runs a self-test with a random fake token that covers a pattern, an argv pattern, the literal block, and strict masking. It never prints a value.
+In a clone, `npm run check` runs the same script. It lists each listed file as `exists`, `missing`, `directory, skipped`, or `broken symlink, skipped`, with its value count, counts patterns, allow entries, and known values, and runs a self-test with a random fake token that covers a pattern, an argv pattern, the literal block, and strict masking. It never prints a value.
 
 ## When a secret leaks
 
@@ -240,8 +257,10 @@ If a secret reaches the model's output unredacted, the plugin ships a skill, `re
 Claude Code ignores a malformed hook output and shows the original text. So when the hook throws after reading a payload with a tool response, for example on a malformed config, it prints a valid output of the same shape with every string replaced by:
 
 ```text
-[hush] output withheld: redaction failed (<error class>)
+[hush] output withheld: redaction failed (<error class> in <file>). Fix or remove <file>, then run node <plugin>/scripts/check.js.
 ```
+
+The message names the file at fault and how to recover: for your config, fix or remove it; for a file listed in `files` that hush may not read, make it readable or remove it from `files`; for a damaged `hush.default.json`, reinstall hush. It never holds the error text, which may quote the file. `scripts/check.js` prints the same file and, for JSON, the position of the error.
 
 A plain string response is replaced by that text. The hook exits silently, leaving the output unchanged, on an unparseable payload, a payload without a response, or a response whose strings are all shorter than `minLength`. With a malformed config, only a response whose strings are all empty exits silently.
 
@@ -249,7 +268,8 @@ A plain string response is replaced by that text. The hook exits silently, leavi
 
 hush does not catch:
 
-- Encoded values, such as base64.
+- Encoded values, such as base64 or hex, unless the encoded form itself is a known value or matches a pattern.
+- Values split by ANSI codes or `\r`, and the part of a value written before a pause (see [limits of the filter](#output-filter)).
 - Slices of a known value shorter than `minLength`.
 - Values outside the listed files that match no pattern.
 - Image or binary content that is not text: base64 strings are scanned, pixels are not.
