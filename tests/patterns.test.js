@@ -70,6 +70,10 @@ test('variable references, placeholders, and look-alike flags are left alone', (
     '["redis-cli", "-a", "$REDIS_PASSWORD", "ping"]',
     '["redis-server", "--requirepass", "${REDIS_PASSWORD}"]',
     'PGPASSWORD=[hush pgpassword sha:12345678] psql',
+    'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping',
+    'export API_TOKEN=${OTHER_API_TOKEN}',
+    'DATABASE_URL=postgres://app:${DB_PASSWORD}@db:5432/app',
+    'DB_PASSWORD="$(cat /run/secrets/db_password)"',
   ];
   for (const t of keep) assert.equal(red(t).text, t, t);
 });
