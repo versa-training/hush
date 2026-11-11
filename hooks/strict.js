@@ -21,7 +21,7 @@
 //     Not: sha256 digests, hex IDs, UUIDs and MAC addresses (hex digits and
 //     separators only), timestamps, paths, image references, and URLs
 //     without credentials.
-const { sha8 } = require('./hush-lib');
+const { sha8, regex } = require('./hush-lib');
 
 const SECRET_KEY = /pass|secret|token|key|auth|credential|dsn|cookie|session/i;
 const ARGV_KEY = /^(?:cmd|entrypoint|args|test|command)$/i;
@@ -44,7 +44,7 @@ function varied(w) {
 // Returns true when the command text matches one of cfg.strictCommands.
 function isStrict(command, cfg) {
   if (!command) return false;
-  return (cfg.strictCommands || []).some((r) => new RegExp(r, 'm').test(command));
+  return (cfg.strictCommands || []).some((r, i) => regex(cfg, 'strictCommands', i, r, 'm').test(command));
 }
 
 // The command inside the string Claude Code passes to `bash -c`

@@ -2,10 +2,27 @@
 'use strict';
 // Prints config status and runs a self-test. Never prints a value.
 const crypto = require('crypto');
-const { loadConfig, loadKnown, redact } = require('../hooks/hush-lib');
+const { loadConfig, loadKnown, redact, compile } = require('../hooks/hush-lib');
 
-const cfg = loadConfig();
-const { values, files } = loadKnown(cfg);
+// An error in the config or a listed file: its class, file, and for JSON its
+// position, never its message (which may quote the file).
+function fail(e) {
+  const cls = (e && e.constructor && e.constructor.name) || 'Error';
+  const pos = /position \d+(?: \(line \d+ column \d+\))?/.exec((e && e.message) || '');
+  console.log(`config error: ${cls}${e && e.hushFile ? ` in ${e.hushFile}` : ''}${pos ? ` at ${pos[0]}` : ''}`);
+  console.log('self-test: FAILED (config)');
+  process.exit(1);
+}
+
+let cfg;
+let values;
+let files;
+try {
+  cfg = loadConfig();
+  compile(cfg);
+  ({ values, files } = loadKnown(cfg));
+  require('../hooks/strict').isStrict('x', cfg);
+} catch (e) { fail(e); }
 for (const f of files) console.log(`${f.path}: ${f.exists ? 'exists' : 'missing'}, ${f.count} value(s)`);
 console.log(`patterns: ${cfg.patterns.length}, allow: ${cfg.allow.length}, known values: ${values.length}`);
 

@@ -8,16 +8,63 @@ const sha8 = (v) => crypto.createHash('sha256').update(v).digest('hex').slice(0,
 const home = (p) => (p === '~' || p.startsWith('~/') ? os.homedir() + p.slice(1) : p);
 const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
 
+const ROOT = path.join(__dirname, '..');
+const DEFAULT_FILE = path.join(ROOT, 'hush.default.json');
+const LISTS = ['files', 'patterns', 'allow', 'allowLiterals', 'strictCommands'];
+
+// Tags an error with the file it came from, for the recovery message.
+function at(e, file) {
+  if (e && typeof e === 'object' && !e.hushFile) e.hushFile = file;
+  return e;
+}
+
+// The user config's lists and patterns have the right types; else a TypeError.
+function validate(u) {
+  if (!u || typeof u !== 'object' || Array.isArray(u)) throw new TypeError('not an object');
+  for (const k of LISTS) if (u[k] !== undefined && !Array.isArray(u[k])) throw new TypeError(`${k} is not a list`);
+  for (const p of u.patterns || []) if (!p || typeof p.name !== 'string' || typeof p.regex !== 'string') throw new TypeError('a pattern needs a name and a regex');
+}
+
+// The default config with the user config ($HUSH_CONFIG or
+// ~/.config/hush/config.json) appended. cfg.userFile names the user config;
+// entries from index cfg.defaults[k] on in list k come from it.
 function loadConfig() {
-  const cfg = readJson(path.join(__dirname, '..', 'hush.default.json'));
+  let cfg;
+  try { cfg = readJson(DEFAULT_FILE); } catch (e) { throw at(e, DEFAULT_FILE); }
   const userFile = home(process.env.HUSH_CONFIG || '~/.config/hush/config.json');
+  cfg.userFile = userFile;
+  cfg.defaults = Object.fromEntries(LISTS.map((k) => [k, (cfg[k] || []).length]));
   if (fs.existsSync(userFile)) {
-    const u = readJson(userFile);
-    for (const k of ['files', 'patterns', 'allow', 'allowLiterals', 'strictCommands']) cfg[k] = (cfg[k] || []).concat(u[k] || []);
+    let u;
+    try { u = readJson(userFile); validate(u); } catch (e) { throw at(e, userFile); }
+    for (const k of LISTS) cfg[k] = (cfg[k] || []).concat(u[k] || []);
     if (u.minLength) cfg.minLength = u.minLength;
     if (typeof u.blockLiterals === 'boolean') cfg.blockLiterals = u.blockLiterals;
   }
   return cfg;
+}
+
+// The file that entry i of list k came from.
+const sourceOf = (cfg, k, i) => (cfg.userFile && cfg.defaults && i >= cfg.defaults[k] ? cfg.userFile : DEFAULT_FILE);
+
+// Compiles entry i of list k; an invalid regex is tagged with its file.
+function regex(cfg, k, i, source, flags) {
+  try { return new RegExp(source, flags); } catch (e) { throw at(e, sourceOf(cfg, k, i)); }
+}
+
+const quoteArg = (s) => (/^[\w./~-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`);
+const CHECK = `node ${quoteArg(path.join(ROOT, 'scripts', 'check.js'))}`;
+
+// The line shown when an error makes hush withhold output or block a
+// command: the error class, the file it came from, and the recovery step.
+// Never the error message, which may quote the file.
+function failure(what, e) {
+  const cls = (e && e.constructor && e.constructor.name) || 'Error';
+  const file = e && e.hushFile;
+  if (!file) return `[hush] ${what} (${cls}). Run ${CHECK} to find the cause.`;
+  if (file === DEFAULT_FILE) return `[hush] ${what} (${cls} in ${file}). The plugin is damaged: reinstall hush, then restart the claude process.`;
+  if (e.hushKnown) return `[hush] ${what} (${cls} in ${file}, a file listed in "files"). Make it readable, or remove it from "files" in ${e.hushKnown}, then run ${CHECK}.`;
+  return `[hush] ${what} (${cls} in ${file}). Fix or remove ${file}, then run ${CHECK}.`;
 }
 
 // Expand ~ and `*` within one path segment.
@@ -156,7 +203,7 @@ function buildKnown(known, cfg) {
   return { re: new RegExp(alt.join('|'), 'g'), names };
 }
 
-const compile = (cfg) => cfg.patterns.map((p) => ({ name: p.name, re: new RegExp(p.regex, 'g') }));
+const compile = (cfg) => cfg.patterns.map((p, i) => ({ name: p.name, re: regex(cfg, 'patterns', i, p.regex, 'g') }));
 
 function log(tool, counts) {
   const file = process.env.HUSH_LOG || path.join(os.homedir(), '.local/state/hush/log.jsonl');
@@ -164,4 +211,4 @@ function log(tool, counts) {
   fs.appendFileSync(file, JSON.stringify({ ts: new Date().toISOString(), tool, counts }) + '\n', { mode: 0o600 });
 }
 
-module.exports = { allowSet, buildKnown, loadConfig, loadKnown, redact, compile, expand, log, sha8 };
+module.exports = { allowSet, buildKnown, loadConfig, loadKnown, redact, compile, expand, log, sha8, failure, regex, at, ROOT, DEFAULT_FILE };

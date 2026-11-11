@@ -11,14 +11,16 @@ const { spawnSync } = require('child_process');
 
 const MARK = ' # hush output filter';
 const quote = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
+const arg = (s) => (/^[\w./~-]+$/.test(s) ? s : quote(s));
 
 // The line this hook appends, one line so that bash messages and $LINENO
 // shift as little as possible. The guard skips the setup when the shell has
 // already run it, so a second copy of the line (another SessionStart, another
 // copy of hush) does not stack a second filter.
 function block(root = __dirname) {
-  const sh = quote(path.join(root, 'wrap.sh'));
-  return `[ "\${__hush_on-}" = "$$" ] || . ${sh} || { printf '%s\\n' '[hush] output withheld: wrapper unavailable'; exit 125; }${MARK}\n`;
+  const wrap = path.join(root, 'wrap.sh');
+  const msg = `[hush] output withheld: wrapper unavailable: ${wrap} did not start the output filter. If hush was updated, moved, or removed, restart the claude process. Else check that node 22 or newer is on PATH and run node ${arg(path.join(path.dirname(root), 'scripts', 'check.js'))}`;
+  return `[ "\${__hush_on-}" = "$$" ] || . ${quote(wrap)} || { printf '%s\\n' ${quote(msg)}; exit 125; }${MARK}\n`;
 }
 
 // Appends the block to file unless the file already holds it. Keeps every line

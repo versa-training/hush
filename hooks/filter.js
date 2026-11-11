@@ -10,7 +10,7 @@
 // Usage: node filter.js <nonce> <bash|monitor>
 const fs = require('fs');
 const { StringDecoder } = require('string_decoder');
-const { loadConfig, loadKnown, buildKnown, compile, redact, log } = require('./hush-lib');
+const { loadConfig, loadKnown, buildKnown, compile, redact, log, failure } = require('./hush-lib');
 const { Strict, isStrict, commandOf } = require('./strict');
 
 const OUT = Number(process.env.HUSH_FILTER_FD || 3);
@@ -82,7 +82,7 @@ const withhold = (e) => {
   if (failed) return;
   failed = true;
   pending = '';
-  const msg = `[hush] output withheld: redaction failed (${(e && e.constructor && e.constructor.name) || 'Error'})\n`;
+  const msg = `${failure('output withheld: redaction failed', e)}\n`;
   try { writeAll(OUT, msg); } catch { /* nothing left to write to */ }
 };
 

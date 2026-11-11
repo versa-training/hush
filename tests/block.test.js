@@ -144,10 +144,15 @@ test('blockLiterals false turns the block off', () => {
   assert.equal(hook(`redis-cli -a ${fake()} ping`, { blockLiterals: false }).status, 0);
 });
 
-test('fail closed: a malformed config blocks with a message; an unparseable payload passes', () => {
-  const r = hook('echo hi', '{ not json');
-  assert.equal(r.status, 2);
-  assert.match(r.stderr, /check failed \(SyntaxError\)/);
+test('fail closed: a malformed config blocks with a message that names the file and the recovery; an unparseable payload passes', () => {
+  const check = `node ${path.join(__dirname, '..', 'scripts', 'check.js')}`;
+  for (const [cfg, cls] of [['{ not json', 'SyntaxError'], ['{"files": "x"}', 'TypeError'], ['[1]', 'TypeError']]) {
+    const r = hook('echo hi', cfg);
+    assert.equal(r.status, 2, cfg);
+    const file = /in (\S+)\)/.exec(r.stderr)[1];
+    assert.equal(r.stderr, `[hush] blocked: the literal password check failed (${cls} in ${file}). Fix or remove ${file}, then run ${check}. The Edit and Write tools are not blocked by this check.\n`, cfg);
+    assert.ok(!/blockLiterals/.test(r.stderr));
+  }
   const p = spawnSync('node', [BLOCK], { input: 'nope', encoding: 'utf8' });
   assert.equal(p.status, 0);
 });

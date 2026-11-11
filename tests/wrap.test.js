@@ -52,6 +52,7 @@ function sh(command, opts = {}) {
   return { status: p.status, signal: p.signal, out: fs.readFileSync(r.out), cwd: fs.existsSync(cwdFile) ? fs.readFileSync(cwdFile, 'utf8').trim() : null };
 }
 const text = (r) => r.out.toString('utf8');
+const unavailable = (hooks) => `[hush] output withheld: wrapper unavailable: ${hooks}/wrap.sh did not start the output filter. If hush was updated, moved, or removed, restart the claude process. Else check that node 22 or newer is on PATH and run node ${path.dirname(hooks)}/scripts/check.js`;
 
 // Same exit status, same cwd, same bytes with and without the filter, except
 // line numbers: any env script in front of the command shifts them (tested below).
@@ -390,20 +391,24 @@ test('a long-running stream is killed with its process group, no orphans', async
   assert.equal(left, '');
 });
 
-test('fail closed: filter throws on a bad config: output withheld, status 125', () => {
-  const bad = path.join(tmp, 'bad.json');
-  fs.writeFileSync(bad, JSON.stringify({ patterns: [{ name: 'x', regex: '(' }] }));
-  const v = hex(24);
-  const r = sh(`echo X_TOKEN=${v}; exit 0`, { env: { HUSH_CONFIG: bad } });
-  assert.equal(r.status, 125);
-  assert.equal(text(r), '[hush] output withheld: redaction failed (SyntaxError)\n');
+const CHECK = `node ${path.join(__dirname, '..', 'scripts', 'check.js')}`;
+
+test('fail closed: filter throws on a bad config: output withheld, status 125, the message names the file and the recovery', () => {
+  for (const [cfg, cls] of [[{ patterns: [{ name: 'x', regex: '(' }] }, 'SyntaxError'], [{ strictCommands: ['('] }, 'SyntaxError'], ['{ not json', 'SyntaxError'], [{ patterns: 'x' }, 'TypeError']]) {
+    const bad = path.join(tmp, `bad-${hex(3)}.json`);
+    fs.writeFileSync(bad, typeof cfg === 'string' ? cfg : JSON.stringify(cfg));
+    const v = hex(24);
+    const r = sh(`echo X_TOKEN=${v}; exit 0`, { env: { HUSH_CONFIG: bad } });
+    assert.equal(r.status, 125);
+    assert.equal(text(r), `[hush] output withheld: redaction failed (${cls} in ${bad}). Fix or remove ${bad}, then run ${CHECK}.\n`);
+  }
 });
 
 test('fail closed: node missing: command not run, one line, status 125', () => {
   const marker = path.join(tmp, 'ran');
   const r = sh(`touch ${marker}; echo X_TOKEN=${hex(24)}`, { env: { PATH: '/nonexistent' } });
   assert.equal(r.status, 125);
-  assert.equal(text(r), '[hush] output withheld: wrapper unavailable\n');
+  assert.equal(text(r), `${unavailable(HOOKS)}\n`);
   assert.ok(!fs.existsSync(marker));
 });
 
@@ -412,19 +417,21 @@ test('fail closed: filter.js missing or crashing', () => {
   fs.copyFileSync(path.join(HOOKS, 'wrap.sh'), path.join(dir, 'wrap.sh'));
   const marker = path.join(tmp, 'ran-nofilter');
   const p = sh(`touch ${marker}; echo hi`, { envScript: block(dir) });
-  assert.deepEqual([p.status, text(p)], [125, '[hush] output withheld: wrapper unavailable\n']);
+  assert.deepEqual([p.status, text(p)], [125, `${unavailable(dir)}\n`]);
   assert.ok(!fs.existsSync(marker));
   fs.writeFileSync(path.join(dir, 'filter.js'), 'process.exit(3)');
   const q = sh(`echo X_TOKEN=${hex(24)}`, { envScript: block(dir) });
   assert.equal(q.status, 125);
-  assert.equal(text(q), '[hush] output withheld: filter failed\n');
+  assert.equal(text(q), `[hush] output withheld: filter failed. Run node ${path.dirname(dir)}/scripts/check.js to find the cause.\n`);
 });
 
-test('fail closed: wrap.sh missing', () => {
+test('fail closed: wrap.sh missing (plugin directory moved or removed): the message names the path and says to restart claude', () => {
   const marker = path.join(tmp, 'ran-nowrap');
-  const p = sh(`touch ${marker}`, { envScript: block(path.join(tmp, 'no-such-dir')) });
+  const gone = path.join(tmp, 'no-such-dir', 'hooks');
+  const p = sh(`touch ${marker}`, { envScript: block(gone) });
   assert.equal(p.status, 125);
-  assert.ok(text(p).endsWith('[hush] output withheld: wrapper unavailable\n'));
+  assert.ok(text(p).endsWith(`${unavailable(gone)}\n`));
+  assert.match(text(p), /no-such-dir\/hooks\/wrap\.sh did not start the output filter\. If hush was updated, moved, or removed, restart the claude process\./);
   assert.ok(!fs.existsSync(marker));
 });
 

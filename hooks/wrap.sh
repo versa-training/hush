@@ -21,7 +21,7 @@ exec {__hush_o}>&1
 # The coproc starts the filter in the background and exits at once, so the
 # filter is not a child of this shell and a bare `wait` in the command does
 # not wait for it. The filter's first line on the ack pipe is its pid.
-coproc __HUSH { { node "$__hush_d/filter.js" "$__hush_n" "$__hush_m" 3>&"$__hush_o" 2>/dev/null || { printf '%s\n' '[hush] output withheld: filter failed' >&"$__hush_o"; echo 1; }; } <&0 & echo "$!"; }
+coproc __HUSH { { node "$__hush_d/filter.js" "$__hush_n" "$__hush_m" 3>&"$__hush_o" 2>/dev/null || { printf '%s\n' "[hush] output withheld: filter failed. Run node ${__hush_d%/*}/scripts/check.js to find the cause." >&"$__hush_o"; echo 1; }; } <&0 & echo "$!"; }
 # Bash closes the coproc's own fds when it reaps the coproc, and marks them
 # close-on-exec, so the shell works on copies.
 exec {__hush_a}<&"${__HUSH[0]}" {__hush_i}>&"${__HUSH[1]}"

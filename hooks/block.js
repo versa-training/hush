@@ -27,7 +27,8 @@ function main() {
 
 let code;
 try { code = main(); } catch (e) {
-  process.stderr.write(`[hush] blocked: the literal password check failed (${(e && e.constructor && e.constructor.name) || 'Error'}). Fix the hush config, or set blockLiterals to false.\n`);
+  const { failure } = require('./hush-lib');
+  process.stderr.write(`${failure('blocked: the literal password check failed', e)} The Edit and Write tools are not blocked by this check.\n`);
   code = 2;
 }
 process.exit(code);

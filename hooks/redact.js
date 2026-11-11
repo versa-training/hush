@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-const { loadConfig, loadKnown, buildKnown, compile, redact, log } = require('./hush-lib');
+const { loadConfig, loadKnown, buildKnown, compile, redact, log, failure } = require('./hush-lib');
 const { Strict, isStrict, notice } = require('./strict');
 
 let payload;
@@ -60,6 +60,6 @@ try {
     try { log(tool || 'unknown', counts); } catch { /* log is best effort */ }
   }
 } catch (e) {
-  const msg = `[hush] output withheld: redaction failed (${(e && e.constructor && e.constructor.name) || 'Error'})`;
+  const msg = failure('output withheld: redaction failed', e);
   emit(mapStrings(r, () => msg));
 }

@@ -11,6 +11,7 @@ const { loadConfig, loadKnown, redact, sha8 } = require('../hooks/hush-lib');
 const hex = (n) => crypto.randomBytes(n).toString('hex');
 const b64 = (n) => crypto.randomBytes(n).toString('base64url');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hush-test-'));
+const CHECK = `node ${path.join(__dirname, '..', 'scripts', 'check.js')}`;
 const write = (name, content) => { const p = path.join(tmp, name); fs.writeFileSync(p, content); return p; };
 
 function withConfig(cfg) {
@@ -162,8 +163,9 @@ test('hook: fails closed on a bad regex', () => {
   const bad = write('bad.json', JSON.stringify({ patterns: [{ name: 'x', regex: '(' }] }));
   const r = hook({ stdout: 'secret stuff', stderr: 'e' }, { HUSH_CONFIG: bad });
   assert.equal(r.status, 0);
-  assert.equal(r.out.updatedToolOutput.stdout, '[hush] output withheld: redaction failed (SyntaxError)');
-  assert.equal(r.out.updatedToolOutput.stderr, '[hush] output withheld: redaction failed (SyntaxError)');
+  const msg = `[hush] output withheld: redaction failed (SyntaxError in ${bad}). Fix or remove ${bad}, then run ${CHECK}.`;
+  assert.equal(r.out.updatedToolOutput.stdout, msg);
+  assert.equal(r.out.updatedToolOutput.stderr, msg);
 });
 
 test('log holds counts, no value', () => {
@@ -188,8 +190,9 @@ test('performance: 100 KB, 250 known values', () => {
   assert.ok(!vals.some((v) => r.text.includes(v)));
 });
 
-const W = (c) => `[hush] output withheld: redaction failed (${c})`;
-const bad = () => write(`bad-${hex(3)}.json`, JSON.stringify({ patterns: [{ name: 'x', regex: '(' }] }));
+let badFile;
+const W = (c) => `[hush] output withheld: redaction failed (${c} in ${badFile}). Fix or remove ${badFile}, then run ${CHECK}.`;
+const bad = () => (badFile = write(`bad-${hex(3)}.json`, JSON.stringify({ patterns: [{ name: 'x', regex: '(' }] })));
 
 test('hook: Read shape, non-string fields kept, no notice', () => {
   const v = `X_TOKEN=${b64(24)}`;
@@ -263,4 +266,14 @@ test('env pattern: linear time on a long word run', () => {
   const r = run(`${'b'.repeat(200000)} X_TOKEN=${hex(20)}`);
   assert.ok(performance.now() - t0 < 200, `${performance.now() - t0} ms`);
   assert.equal(r.counts.env, 1);
+});
+
+test('check.js: a bad config prints the error class, the file, and the JSON position, never the file content', () => {
+  const v = hex(24);
+  const f = write(`badcheck-${hex(3)}.json`, `{"files": [], "note": "${v}" oops}`);
+  const r = spawnSync('node', [path.join(__dirname, '../scripts/check.js')], { env: { ...process.env, HUSH_CONFIG: f }, encoding: 'utf8' });
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, new RegExp(`^config error: SyntaxError in ${f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} at position \\d+`));
+  assert.match(r.stdout, /self-test: FAILED \(config\)/);
+  assert.ok(!(r.stdout + r.stderr).includes(v));
 });
