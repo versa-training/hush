@@ -8,6 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 
+const MARK = ' # hush output filter';
 const quote = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
 
 // The line this hook appends, one line so that bash messages and $LINENO
@@ -16,16 +17,25 @@ const quote = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
 // copy of hush) does not stack a second filter.
 function block(root = __dirname) {
   const sh = quote(path.join(root, 'wrap.sh'));
-  return `[ "\${__hush_on-}" = "$$" ] || . ${sh} || { printf '%s\\n' '[hush] output withheld: wrapper unavailable'; exit 125; } # hush output filter\n`;
+  return `[ "\${__hush_on-}" = "$$" ] || . ${sh} || { printf '%s\\n' '[hush] output withheld: wrapper unavailable'; exit 125; }${MARK}\n`;
 }
 
-// Appends the block to file unless the file already holds it. Never truncates:
-// other hooks write to the same file.
+// Appends the block to file unless the file already holds it. Keeps every line
+// other hooks wrote. A hush line with another plugin path (left by an older
+// version of hush in a resumed session) is dropped, because its wrap.sh may be
+// gone and the line would then withhold the output of every command.
 function install(file, root = __dirname) {
   const b = block(root);
   let old = '';
   try { old = fs.readFileSync(file, 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
-  if (old.includes(b)) return false;
+  if (old.split('\n').includes(b.slice(0, -1))) return false;
+  const lines = old.split('\n');
+  const kept = lines.filter((l) => !l.endsWith(MARK));
+  if (kept.length !== lines.length) {
+    const rest = kept.join('\n');
+    fs.writeFileSync(file, (rest && !rest.endsWith('\n') ? `${rest}\n` : rest) + b);
+    return true;
+  }
   fs.appendFileSync(file, (old && !old.endsWith('\n') ? '\n' : '') + b);
   return true;
 }

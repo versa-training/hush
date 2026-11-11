@@ -79,6 +79,17 @@ test('session-start.js: appends the block once, keeps what other hooks wrote', (
   assert.equal(fs.readFileSync(g, 'utf8'), block(HOOKS));
 });
 
+test('session-start.js: a hush line with another plugin path (older version, resumed session) is replaced, other lines kept', () => {
+  const f = path.join(tmp, 'env-stale.sh');
+  const stale = block(path.join(tmp, 'gone-0.1.0'));
+  fs.writeFileSync(f, `export A=1\n${stale}export B=2`);
+  assert.equal(install(f, HOOKS), true);
+  assert.equal(fs.readFileSync(f, 'utf8'), `export A=1\nexport B=2\n${block(HOOKS)}`);
+  assert.equal(install(f, HOOKS), false);
+  const r = sh('echo "$A$B ok"', { envScript: fs.readFileSync(f, 'utf8') });
+  assert.deepEqual([r.status, text(r)], [0, '12 ok\n']);
+});
+
 test('session-start.js as a hook: writes CLAUDE_ENV_FILE for every source; warns when it is unset', () => {
   const f = path.join(tmp, 'env-hook.sh');
   for (const source of ['startup', 'resume', 'clear', 'compact']) {
