@@ -23,7 +23,7 @@ try {
   ({ values, files } = loadKnown(cfg));
   require('../hooks/strict').isStrict('x', cfg);
 } catch (e) { fail(e); }
-for (const f of files) console.log(`${f.path}: ${f.exists ? 'exists' : 'missing'}, ${f.count} value(s)`);
+for (const f of files) console.log(`${f.path}: ${f.note}, ${f.count} value(s)`);
 console.log(`patterns: ${cfg.patterns.length}, allow: ${cfg.allow.length}, known values: ${values.length}`);
 
 const fake = crypto.randomBytes(24).toString('hex');

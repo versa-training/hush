@@ -277,3 +277,31 @@ test('check.js: a bad config prints the error class, the file, and the JSON posi
   assert.match(r.stdout, /self-test: FAILED \(config\)/);
   assert.ok(!(r.stdout + r.stderr).includes(v));
 });
+
+test('listed files: an unreadable file fails closed with a message naming it; a directory and a broken symlink are skipped with a note', () => {
+  const v = hex(20);
+  const d = fs.mkdtempSync(path.join(tmp, 'perm-'));
+  const locked = path.join(d, 'locked.env');
+  fs.writeFileSync(locked, `LOCKED_SECRET=${v}\n`);
+  fs.chmodSync(locked, 0);
+  fs.mkdirSync(path.join(d, 'dir.env'));
+  fs.symlinkSync(path.join(d, 'gone'), path.join(d, 'link.env'));
+  fs.writeFileSync(path.join(d, 'ok.env'), `OK_SECRET=${hex(20)}\n`);
+  const skipCfg = write(`perm-skip-${hex(3)}.json`, JSON.stringify({ files: [path.join(d, 'dir.env'), path.join(d, 'link.env'), path.join(d, 'ok.env'), path.join(d, '*', 'sub', '.env')] }));
+  const c = spawnSync('node', [path.join(__dirname, '../scripts/check.js')], { env: { ...process.env, HUSH_CONFIG: skipCfg }, encoding: 'utf8' });
+  assert.equal(c.status, 0, c.stdout);
+  assert.ok(c.stdout.includes(`${path.join(d, 'dir.env')}: directory, skipped, 0 value(s)`));
+  assert.ok(c.stdout.includes(`${path.join(d, 'link.env')}: broken symlink, skipped, 0 value(s)`));
+  assert.ok(c.stdout.includes(`${path.join(d, 'ok.env')}: exists, 1 value(s)`));
+  assert.ok(c.stdout.includes(`${path.join(d, 'ok.env', 'sub', '.env')}: missing, 0 value(s)`), 'a path below a file is missing');
+  if (process.getuid && process.getuid() === 0) return; // root reads a mode-0 file
+  const lockCfg = write(`perm-lock-${hex(3)}.json`, JSON.stringify({ files: [path.join(d, '*.env')] }));
+  process.env.HUSH_CONFIG = lockCfg;
+  assert.throws(() => loadKnown(loadConfig()), (e) => e.code === 'EACCES' && e.hushFile === locked);
+  const h = hook({ stdout: `out ${v} end`, stderr: '' }, { HUSH_CONFIG: lockCfg });
+  assert.equal(h.out.updatedToolOutput.stdout, `[hush] output withheld: redaction failed (Error in ${locked}, a file listed in "files"). Make it readable or fix it, or remove it from "files" in ${lockCfg}, then run ${CHECK}.`);
+  const k = spawnSync('node', [path.join(__dirname, '../scripts/check.js')], { env: { ...process.env, HUSH_CONFIG: lockCfg }, encoding: 'utf8' });
+  assert.equal(k.status, 1);
+  assert.match(k.stdout, new RegExp(`config error: Error in ${locked.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  fs.chmodSync(locked, 0o600);
+});

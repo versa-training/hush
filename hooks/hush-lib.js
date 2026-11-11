@@ -63,7 +63,8 @@ function failure(what, e) {
   const file = e && e.hushFile;
   if (!file) return `[hush] ${what} (${cls}). Run ${CHECK} to find the cause.`;
   if (file === DEFAULT_FILE) return `[hush] ${what} (${cls} in ${file}). The plugin is damaged: reinstall hush, then restart the claude process.`;
-  if (e.hushKnown) return `[hush] ${what} (${cls} in ${file}, a file listed in "files"). Make it readable, or remove it from "files" in ${e.hushKnown}, then run ${CHECK}.`;
+  if (e.hushKnown === DEFAULT_FILE) return `[hush] ${what} (${cls} in ${file}, a file listed in "files"). Make it readable or fix it, then run ${CHECK}.`;
+  if (e.hushKnown) return `[hush] ${what} (${cls} in ${file}, a file listed in "files"). Make it readable or fix it, or remove it from "files" in ${e.hushKnown}, then run ${CHECK}.`;
   return `[hush] ${what} (${cls} in ${file}). Fix or remove ${file}, then run ${CHECK}.`;
 }
 
@@ -77,7 +78,7 @@ function expand(pattern) {
       if (!seg.includes('*')) { next.push(i ? base + '/' + seg : seg); continue; }
       const re = new RegExp('^' + seg.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*') + '$');
       let names = [];
-      try { names = fs.readdirSync(base || '/'); } catch { /* missing dir */ }
+      try { names = fs.readdirSync(base || '/'); } catch (e) { if (e.code !== 'ENOENT' && e.code !== 'ENOTDIR') throw at(e, base || '/'); }
       for (const n of names) if (re.test(n)) next.push(base + '/' + n);
     }
     paths = next;
@@ -115,15 +116,31 @@ function parseJson(node, key = '', out = []) {
 }
 
 // Returns {values: [{name, value}], files: [{path, exists, count}]}.
+// A missing file (also below a path that is a file), a broken symlink, and a
+// directory are skipped, with a note for check.js; any other error, such as
+// a file it may not read, fails closed.
 function loadKnown(cfg) {
   const values = [];
   const files = [];
-  for (const f of cfg.files) {
-    for (const p of expand(f)) {
+  cfg.files.forEach((f, i) => {
+    const listed = (e) => { e.hushKnown = sourceOf(cfg, 'files', i); return e; };
+    let paths;
+    try { paths = expand(f); } catch (e) { throw listed(e); }
+    for (const p of paths) {
       let text;
-      try { text = fs.readFileSync(p, 'utf8'); } catch { files.push({ path: p, exists: false, count: 0 }); continue; }
+      try { text = fs.readFileSync(p, 'utf8'); } catch (e) {
+        if (e.code === 'ENOENT' || e.code === 'ENOTDIR') {
+          let link = false;
+          try { link = fs.lstatSync(p).isSymbolicLink(); } catch { /* missing */ }
+          files.push({ path: p, exists: false, count: 0, note: link ? 'broken symlink, skipped' : 'missing' });
+          continue;
+        }
+        if (e.code === 'EISDIR') { files.push({ path: p, exists: false, count: 0, note: 'directory, skipped' }); continue; }
+        throw listed(at(e, p));
+      }
       const isJson = p.endsWith('.json') || text.trimStart().startsWith('{');
-      let pairs = isJson ? parseJson(JSON.parse(text)) : parseDotenv(text).filter(([, v]) => v);
+      let pairs;
+      try { pairs = isJson ? parseJson(JSON.parse(text)) : parseDotenv(text).filter(([, v]) => v); } catch (e) { throw listed(at(e, p)); }
       // A file with no NAME=value lines holds bare values: each line, plus the whole text if multi-line.
       if (!isJson && !pairs.length && text.trim()) {
         const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
@@ -131,10 +148,10 @@ function loadKnown(cfg) {
         pairs = lines.map((l) => [path.basename(p), l]);
       }
       const good = pairs.filter(([, v]) => v.length >= cfg.minLength);
-      files.push({ path: p, exists: true, count: good.length });
+      files.push({ path: p, exists: true, count: good.length, note: 'exists' });
       for (const [name, value] of good) values.push({ name, value });
     }
-  }
+  });
   const seen = new Set();
   return {
     values: values.sort((a, b) => b.value.length - a.value.length).filter((x) => !seen.has(x.value) && seen.add(x.value)),
