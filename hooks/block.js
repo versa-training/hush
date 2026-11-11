@@ -11,6 +11,11 @@ try { payload = JSON.parse(fs.readFileSync(0, 'utf8')); } catch { process.exit(0
 const command = payload && payload.tool_input && payload.tool_input.command;
 if (typeof command !== 'string' || !command) process.exit(0);
 
+// True when the command writes a file: a redirection to a path (not to an
+// fd or /dev/null), or tee.
+const writesFile = (c) => /(?:^|[^<>&\d])\d?>>?\|?[ \t]*(?![&( \t]|\/dev\/(?:null|stdout|stderr|tty)\b)\S/.test(c)
+  || /(?:^|[\s|;&(])tee(?:\s+-[A-Za-z-]+)*\s+[^\s|;&>-]/.test(c);
+
 function main() {
   const { loadConfig, allowSet } = require('./hush-lib');
   const cfg = loadConfig();
@@ -21,7 +26,8 @@ function main() {
   const sha = f.length >= cfg.minLength ? ` sha:${f.sha}` : '';
   const more = found.length > 1 ? ` and ${found.length - 1} more` : '';
   process.stderr.write(`[hush] blocked: literal password in the command (rule ${f.rule}${sha}${more}). Read it from an environment variable or a file instead, for example: ${f.fix}\n`
-    + '[hush] Never write the value itself into a command. A public value can be allowed by its sha in allowLiterals; blockLiterals: false turns this check off.\n');
+    + '[hush] Never write the value itself into a command. A public value can be allowed by its sha in allowLiterals; blockLiterals: false turns this check off.\n'
+    + (writesFile(command) ? '[hush] Example code with a sample credential can be written to a file with the Write tool, or with a placeholder such as changeme.\n' : ''));
   return 2;
 }
 

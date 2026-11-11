@@ -61,7 +61,7 @@ test('each shape is blocked with exit 2; the message names the rule and never th
     assert.match(r.stderr, new RegExp(`rule ${rule}\\b`), `${rule}: ${cmd.replace(v, '<v>')} -> ${r.stderr}`);
     assert.ok(!r.stderr.includes(v), 'value repeated');
     assert.equal(r.stdout, '', 'no updatedInput');
-    assert.equal(r.stderr.trim().split('\n').length, 2, 'two lines');
+    assert.equal(r.stderr.trim().split('\n').filter((l) => !l.includes('Write tool')).length, 2, 'two lines');
   }
 });
 
@@ -227,5 +227,21 @@ test('prose in a commit, tag, PR, echo, or printf message: an all-lowercase word
   for (const c of [`git commit -m "fix: redis-cli -a ${v} ping"`, `echo "use --password ${v}"`, `gh pr create --title "x" --body "PGPASSWORD=${v}"`,
     'redis-cli -a requires', 'echo --password option', 'git commit -m "docs: --password Hunter2xyz"']) {
     assert.equal(hook(c).status, 2, c.replace(v, '<v>'));
+  }
+});
+
+test('the block message adds the Write tool hint only when the command writes a file', () => {
+  const hint = /\[hush\] Example code with a sample credential can be written to a file with the Write tool, or with a placeholder such as changeme\.\n$/;
+  const v = fake();
+  for (const c of [`cat > example.py <<'EOF'\nr = redis.Redis(password="x")\nPGPASSWORD=${v} psql\nEOF`, `echo "redis-cli -a ${v}" >> notes.md`, `printf 'requirepass ${v}\\n' | tee redis.conf`]) {
+    const r = hook(c);
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, hint, c.replace(v, '<v>'));
+    assert.equal(r.stderr.trim().split('\n').length, 3);
+  }
+  for (const c of [`redis-cli -a ${v} ping`, `redis-cli -a ${v} ping 2>/dev/null`, `redis-cli -a ${v} ping >&2`]) {
+    const r = hook(c);
+    assert.equal(r.status, 2);
+    assert.ok(!/Write tool/.test(r.stderr), c.replace(v, '<v>'));
   }
 });
