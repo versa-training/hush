@@ -315,17 +315,70 @@ test('fail closed: filter.js missing or crashing', () => {
   assert.equal(text(q), '[hush] output withheld: filter failed\n');
 });
 
-test('fail closed: wrap.sh missing, or a shell that is not bash 4.1 or newer', () => {
+test('fail closed: wrap.sh missing', () => {
   const marker = path.join(tmp, 'ran-nowrap');
   const p = sh(`touch ${marker}`, { envScript: block(path.join(tmp, 'no-such-dir')) });
   assert.equal(p.status, 125);
   assert.ok(text(p).endsWith('[hush] output withheld: wrapper unavailable\n'));
   assert.ok(!fs.existsSync(marker));
-  const env = path.join(tmp, 'posix.sh');
-  fs.writeFileSync(env, block(HOOKS));
-  const d = spawnSync('/bin/sh', ['-c', `. ${env}; touch ${marker}`], { env: ENV, encoding: 'utf8' });
-  assert.equal(d.status, 125);
-  assert.ok(!fs.existsSync(marker));
+});
+
+// zsh: on PATH, or HUSH_TEST_ZSH (a zsh binary unpacked without root).
+const ZSH = process.env.HUSH_TEST_ZSH || spawnSync('sh', ['-c', 'command -v zsh'], { encoding: 'utf8' }).stdout.trim() || null;
+const SHELLS = [['dash', fs.existsSync('/bin/dash') ? '/bin/dash' : null], ['zsh', ZSH]];
+
+for (const [name, shell] of SHELLS) {
+  test(`a shell that is not bash 4.1 or newer (${name}): the line, sourced anyway, sets up no filter; the command runs with its own status and output`, { skip: !shell && `${name} not installed` }, () => {
+    const marker = path.join(tmp, `ran-${name}`);
+    const r = spawnSync(shell, ['-c', ccCommand(`touch ${marker}; echo plain out; echo err >&2; exit 3`, block(HOOKS), path.join(tmp, `cwd-${name}`))], { cwd: tmp, env: ENV, encoding: 'utf8' });
+    assert.equal(r.status, 3);
+    assert.equal(r.stdout, 'plain out\n');
+    assert.equal(r.stderr, 'err\n');
+    assert.ok(fs.existsSync(marker));
+  });
+}
+
+// A fake shell named for zsh or bash, so that Claude Code's rule accepts it as CLAUDE_CODE_SHELL.
+function fakeShell(name, body) {
+  const d = fs.mkdtempSync(path.join(tmp, 'shell-'));
+  const f = path.join(d, name);
+  fs.writeFileSync(f, body, { mode: 0o755 });
+  return f;
+}
+
+test('session-start.js: the shell Claude Code would use is not bash 4.1 or newer: no line, hush lines removed, a message says why', () => {
+  const cases = [
+    ['zsh named dash', fs.existsSync('/bin/dash') && fakeShell('zsh', '#!/bin/sh\nexec /bin/dash "$@"\n'), /with .*\/zsh, which is not bash/],
+    ['bash 3.2', fakeShell('bash', '#!/bin/sh\nprintf %s "3.2.57(1)-release"\n'), /which is bash 3\.2/],
+    ['real zsh', ZSH, /which is not bash/],
+  ];
+  for (const [name, shell, why] of cases) {
+    if (!shell) continue;
+    const f = path.join(tmp, `env-off-${name.replace(/\W/g, '')}.sh`);
+    fs.writeFileSync(f, `export A=1\n${block(path.join(tmp, 'old'))}export B=2\n`);
+    const r = spawnSync('node', [START], { input: '{}', env: { ...ENV, CLAUDE_ENV_FILE: f, CLAUDE_CODE_SHELL: shell }, encoding: 'utf8' });
+    assert.equal(r.status, 0, name);
+    const msg = JSON.parse(r.stdout).systemMessage;
+    assert.match(msg, /^\[hush\] output filter off: /, name);
+    assert.match(msg, why, name);
+    assert.match(msg, /needs bash 4\.1 or newer.*set CLAUDE_CODE_SHELL to the path of bash 4\.1 or newer and restart claude/, name);
+    assert.equal(fs.readFileSync(f, 'utf8'), 'export A=1\nexport B=2\n', name);
+  }
+  const ok = path.join(tmp, 'env-on.sh');
+  const r = spawnSync('node', [START], { input: '{}', env: { ...ENV, CLAUDE_ENV_FILE: ok, CLAUDE_CODE_SHELL: '/bin/bash' }, encoding: 'utf8' });
+  assert.deepEqual([r.status, r.stdout, fs.readFileSync(ok, 'utf8')], [0, '', block(HOOKS)]);
+});
+
+test('session-start.js: picks the shell the way Claude Code does', () => {
+  const { claudeShell } = require('../hooks/session-start');
+  const z = fakeShell('zsh', '#!/bin/sh\n');
+  const b = fakeShell('bash', '#!/bin/sh\n');
+  const PATH = `${path.dirname(z)}:${path.dirname(b)}`;
+  assert.equal(claudeShell({ CLAUDE_CODE_SHELL: z, SHELL: '/bin/bash', PATH }), z);
+  assert.equal(claudeShell({ CLAUDE_CODE_SHELL: '/bin/dash', SHELL: b, PATH }), b, 'an override that names neither bash nor zsh is ignored');
+  assert.equal(claudeShell({ SHELL: z, PATH }), z);
+  assert.equal(claudeShell({ SHELL: '/bin/fish', PATH }), z, 'zsh first when SHELL names neither');
+  assert.equal(claudeShell({ SHELL: '/usr/local/bin/bash-missing', PATH }), b, 'bash first when SHELL names bash');
 });
 
 test('filter.js alone: per-line flush, marker ends the call, ack 0', async () => {

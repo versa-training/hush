@@ -5,8 +5,10 @@
 # everything before the exit. Mode: "bash" when stdout is a regular file (the
 # output file of a Bash call), else "monitor" (Monitor reads a socket). Returns
 # 1 when the filter cannot start, so the caller withholds the output and exits
-# 125. Needs bash 4.1 or newer.
-[ -n "${BASH_VERSION-}" ] && [ "${BASH_VERSINFO[0]}${BASH_VERSINFO[1]}" -ge 41 ] 2>/dev/null || return 1
+# 125. Needs bash 4.1 or newer: in any other shell it returns 0 without
+# setting up the filter (session-start.js does not write the line for such a
+# shell and tells the user so; this guard covers a line sourced anyway).
+[ -n "${BASH_VERSION-}" ] && [ "${BASH_VERSINFO[0]}${BASH_VERSINFO[1]}" -ge 41 ] 2>/dev/null || return 0
 __hush_d=${BASH_SOURCE[0]%/*}
 command -v node >/dev/null 2>&1 && [ -r "$__hush_d/filter.js" ] || return 1
 if [ -n "${SRANDOM-}" ]; then
