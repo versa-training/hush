@@ -21,6 +21,22 @@ const KEEP = 4096;
 const IDLE_MS = Number(process.env.HUSH_FILTER_IDLE_MS || 250);
 const PEM_OPEN = /-----BEGIN [A-Z ]*PRIVATE KEY-----(?![\s\S]*-----END [A-Z ]*PRIVATE KEY-----)/;
 
+// A pretty-printed JSON string array puts each element on its own line, so a
+// flag and its value (`"-a",` then the value) arrive on different lines. A
+// trailing run of complete lines that are array elements followed by a comma
+// may continue, so it is held until a line that is not such an element ends
+// the run; then the run is redacted together with that line.
+const ELEMENT = /^[ \t]*"(?:[^"\\\n]|\\.)*"[ \t]*,[ \t]*\r?$/;
+function holdArgv(text, end) {
+  let start = end;
+  while (start > 0) {
+    const prev = text.lastIndexOf('\n', start - 2) + 1;
+    if (!ELEMENT.test(text.slice(prev, start - 1))) break;
+    start = prev;
+  }
+  return start;
+}
+
 function writeAll(fd, text) {
   const buf = Buffer.from(text, 'utf8');
   let off = 0;
@@ -67,6 +83,7 @@ function drain(all) {
   let end = pending.lastIndexOf('\n') + 1;
   const pem = PEM_OPEN.exec(pending.slice(0, end));
   if (pem && pending.length < CAP) end = pem.index;
+  else if (pending.length < CAP) end = holdArgv(pending, end);
   if (end > 0) { emit(pending.slice(0, end)); pending = pending.slice(end); }
   if (pending.length >= CAP) {
     const headEnd = pending.length - KEEP;

@@ -13,8 +13,9 @@ function loadConfig() {
   const userFile = home(process.env.HUSH_CONFIG || '~/.config/hush/config.json');
   if (fs.existsSync(userFile)) {
     const u = readJson(userFile);
-    for (const k of ['files', 'patterns', 'allow']) cfg[k] = cfg[k].concat(u[k] || []);
+    for (const k of ['files', 'patterns', 'allow', 'allowLiterals', 'strictCommands']) cfg[k] = (cfg[k] || []).concat(u[k] || []);
     if (u.minLength) cfg.minLength = u.minLength;
+    if (typeof u.blockLiterals === 'boolean') cfg.blockLiterals = u.blockLiterals;
   }
   return cfg;
 }
@@ -94,6 +95,10 @@ function loadKnown(cfg) {
   };
 }
 
+// sha8 fingerprints of public values: `allow`, plus `allowLiterals`, the
+// public literals (such as a local database default) that commands may hold.
+const allowSet = (cfg) => new Set([...(cfg.allow || []), ...(cfg.allowLiterals || [])]);
+
 const TOKEN = /\0\d+\0/g;
 
 // Applies fn to the text outside tokens that stand for placeholders made in this run.
@@ -117,7 +122,7 @@ function redact(text, cfg, known, compiled = compile(cfg), index = buildKnown(kn
     made.push(`[hush ${name.replace(/[^A-Za-z0-9_.:-]/g, '_')}${v.length >= cfg.minLength ? ' sha:' + sha8(v) : ''}]`);
     return `\0${made.length - 1}\0`;
   };
-  const allow = new Set(cfg.allow);
+  const allow = allowSet(cfg);
   const hit = (name) => (counts[name] = (counts[name] || 0) + 1);
   // A string shorter than minLength cannot hold a known value.
   if (index.re && text.length >= cfg.minLength) {
@@ -143,7 +148,7 @@ function redact(text, cfg, known, compiled = compile(cfg), index = buildKnown(kn
 
 // One alternation for all known values, longest first; allow-listed values are left out.
 function buildKnown(known, cfg) {
-  const allow = new Set(cfg.allow);
+  const allow = allowSet(cfg);
   const names = new Map();
   for (const { name, value } of known) if (!allow.has(sha8(value)) && !names.has(value)) names.set(value, name);
   if (!names.size) return { re: null, names };
@@ -159,4 +164,4 @@ function log(tool, counts) {
   fs.appendFileSync(file, JSON.stringify({ ts: new Date().toISOString(), tool, counts }) + '\n', { mode: 0o600 });
 }
 
-module.exports = { buildKnown, loadConfig, loadKnown, redact, compile, expand, log, sha8 };
+module.exports = { allowSet, buildKnown, loadConfig, loadKnown, redact, compile, expand, log, sha8 };
