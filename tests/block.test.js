@@ -173,7 +173,7 @@ test('linear time: detection on 32,000-character and 1 MB adversarial commands',
   const allow = allowSet(cfg);
   let worst = 0;
   for (const f of ['curl ', 'curl -u a', 'redis-cli ', 'mysql ', 'a', '"', "'", '$(', '`', '${', 'https://a:', 'PGPASSWORD=', ' -a ', 'Authorization: ', '$($(', '\\', ';',
-    '--password abcdefg ', 'echo "--password abcdefg ', 'git commit -m "redis-cli -a abcdefgh ', 'psql --password x; ']) {
+    '--password abcdefg ', 'echo "--password abcdefg ', 'git commit -m "redis-cli -a abcdefgh ', 'redis-cli AUTH ', 'http -a ', 'A_TOKEN=abcdefgh ', 'password=', 'psql --password x; ']) {
     for (const n of [32000, 1e6]) {
       const s = f.repeat(Math.ceil(n / f.length)).slice(0, n);
       const t0 = performance.now();
@@ -183,6 +183,38 @@ test('linear time: detection on 32,000-character and 1 MB adversarial commands',
   }
   console.log(`# worst detection time: ${worst.toFixed(0)} ms`);
   assert.ok(worst < 1000);
+});
+
+test('more shapes: docker -e and --env, env and inline NAME=, connection strings, redis-cli AUTH, HTTPie -a', () => {
+  const shapes = [
+    ['env-password', (v) => `docker run -e POSTGRES_PASSWORD=${v} postgres:16`],
+    ['env-password', (v) => `docker run --env API_TOKEN=${v} app`],
+    ['env-password', (v) => `docker run --env=SESSION_SECRET=${v} app`],
+    ['env-password', (v) => `env GITHUB_TOKEN=${v} gh pr list`],
+    ['env-password', (v) => `STRIPE_API_KEY=${v} node server.js`],
+    ['env-password', (v) => `export SMTP_PASSWD='${v}'`],
+    ['env-password', (v) => `OPENAI_APIKEY=${v} python x.py`],
+    ['env-password', (v) => `BASIC_AUTH=${v} ./run.sh`],
+    ['conn-password', (v) => `psql "host=db.internal user=app password=${v} dbname=app"`],
+    ['conn-password', (v) => `sqlcmd -S db "Server=db;Uid=sa;Pwd=${v}"`],
+    ['redis-auth', (v) => `redis-cli AUTH ${v}`],
+    ['redis-auth', (v) => `redis-cli -h cache AUTH default ${v}`],
+    ['redis-auth', (v) => `redis-cli -h cache auth ${v} > /tmp/out`],
+    ['httpie-auth', (v) => `http -a admin:${v} https://api.internal/x`],
+    ['httpie-auth', (v) => `https --auth=admin:${v} api.internal/x`],
+  ];
+  for (const [rule, make] of shapes) {
+    const v = fake();
+    const r = hook(make(v));
+    assert.equal(r.status, 2, `${rule}: ${make('<v>')}`);
+    assert.match(r.stderr, new RegExp(`rule ${rule}\\b`), `${rule}: ${make('<v>')} -> ${r.stderr}`);
+    assert.ok(!r.stderr.includes(v));
+  }
+  const pass = ['docker run -e POSTGRES_PASSWORD="$PG_PASSWORD" postgres', 'docker run -e API_TOKEN app', 'env GITHUB_TOKEN="$(cat ~/.gh)" gh pr list',
+    'GIT_AUTHOR_NAME="Max Mustermann" git commit -m x', 'AUTH_PROVIDER=github ./run', 'TOKEN_FILE=/run/secrets/token ./run', 'API_TOKEN=changeme ./run',
+    'psql "host=db user=app password=<password>"', 'redis-cli AUTH "$REDIS_PASSWORD"', 'redis-cli -h cache auth', 'http -a admin https://x', 'http -a "admin:$PW" https://x',
+    'curl https://api.internal/x -o out', 'TOKENIZERS_PARALLELISM=false python x.py'];
+  for (const c of pass) assert.equal(hook(c).status, 0, `${c} -> ${hook(c).stderr}`);
 });
 
 test('prose in a commit, tag, PR, echo, or printf message: an all-lowercase word after a flag passes; a mixed value is still blocked', () => {

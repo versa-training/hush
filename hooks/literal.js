@@ -129,10 +129,15 @@ const SHAPES = [
   { rule: 'sshpass', re: `\\bsshpass${S}+-p${S}*${V}`, fix: 'SSHPASS="$SSH_PASSWORD" sshpass -e ..., or sshpass -f <file>' },
   { rule: 'curl-user', cmd: /\bcurl\b/, re: `${BEFORE}(?:-u${S}*|--user(?:=|${S}+))${V}`, fix: 'curl -u "user:$API_PASSWORD" ..., or curl --netrc-file <file>', user: true },
   { rule: 'authorization', cmd: /\b(?:curl|wget)\b/, re: `[Aa]uthorization:${S}*(?:(?:[Bb]earer|[Bb]asic|[Tt]oken|[Bb]ot|[Dd]igest)${S}+)?${V}`, fix: 'curl -H "Authorization: Bearer $API_TOKEN" ..., or -H @<header-file>' },
-  { rule: 'env-password', re: `(?<![\\w$])(?:PGPASSWORD|MYSQL_PWD|REDISCLI_AUTH|SSHPASS)=${V}`, fix: 'PGPASSFILE=<file> psql ..., or PGPASSWORD="$DB_PASSWORD" psql ...' },
+  { rule: 'env-password', re: `(?<![\\w$])(PGPASSWORD|MYSQL_PWD|REDISCLI_AUTH|SSHPASS|[A-Z0-9_]*(?:PASSWORD|PASSWD|TOKEN|SECRET|API_KEY|APIKEY|AUTH(?!OR))[A-Z0-9_]*)=${V}`, fix: 'PGPASSFILE=<file> psql ..., or PGPASSWORD="$DB_PASSWORD" psql ...' , group: 2, skip: (text, m) => NOT_SECRET_NAME.test(m[1]) },
   { rule: 'url-password', re: `\\b[A-Za-z][A-Za-z0-9+.-]{1,20}://[^\\s\\u0002/@:]*:([^\\s\\u0002@/]+)@`, fix: '"postgres://user:${DB_PASSWORD}@host/db", or a URL read from a file' },
+  { rule: 'conn-password', re: `(?<![\\w$.-])(?:[Pp]ass(?:word|wd)|PASSWORD|PASSWD|[Pp]wd)=${V}`, fix: 'psql "host=db user=app" with the password in PGPASSFILE or ~/.pgpass, or password=$DB_PASSWORD from a variable' },
+  { rule: 'redis-auth', cmd: /\bredis-cli\b/, re: `${BEFORE}[Aa][Uu][Tt][Hh]${S}+([^\\s\\u0002>]+)(?:${S}+([^\\s\\u0002>]+))?`, pick: (m) => (m[2] !== undefined ? 2 : 1), fix: 'redis-cli AUTH "$REDIS_PASSWORD", or REDISCLI_AUTH read from a file' },
+  { rule: 'httpie-auth', cmd: /(?:^|[\s\u0002(])(?:http|https|xh|xhs)(?=[\s\u0002])/, re: `${BEFORE}(?:-a|--auth)(?:=|${S}+)${V}`, fix: 'http -a "user:$API_PASSWORD" ..., or a ~/.netrc entry', user: true },
 ].map((s) => ({ ...s, re: new RegExp(s.re, 'gd') }));
 
+// Names in NAME=value that hold a setting about a secret, not the secret.
+const NOT_SECRET_NAME = /_(?:FILE|PATH|DIR|URL|URI|HOST|PORT|USER|USERNAME|NAME|TYPE|MODE|PROVIDER|METHOD|ENABLED|HEADER|ENDPOINT|ID|DOMAIN|ISSUER|AUDIENCE|SCOPE|REGION|TTL|TIMEOUT|EXPIRY|LENGTH)$/;
 
 const PLACEHOLDER_WORDS = new Set(['changeme', 'password', 'passwd', 'example', 'secret', 'redacted', 'placeholder', 'yourpassword', 'mypassword',
   'your_password', 'your-password', 'my_password', 'my-password', 'pass', 'pwd', 'token', 'yourtoken', 'your_token', 'your-token', 'none', 'null', 'undefined']);
