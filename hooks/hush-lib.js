@@ -177,6 +177,28 @@ const outside = (text, fn) => {
   return parts.join('');
 };
 
+const PLACEHOLDER_WORDS = new Set(['changeme', 'password', 'passwd', 'example', 'secret', 'redacted', 'placeholder', 'yourpassword', 'mypassword',
+  'your_password', 'your-password', 'my_password', 'my-password', 'pass', 'pwd', 'token', 'yourtoken', 'your_token', 'your-token', 'none', 'null', 'undefined',
+  // the default password in the redis.conf that Redis ships
+  'foobared']);
+
+// True when v is a placeholder, not a value: <password>, {{x}}, [hush ...],
+// xxx, ***, ..., a placeholder word, or an ALL_CAPS name (a variable written without $).
+function placeholder(v) {
+  return /^(?:<[^<>]*>?|\{\{[^}]*\}\}|\[hush\b.*|x{3,}|X{3,}|\*{3,}|\.{3,}|\?{3,}|…+|%s)$/.test(v)
+    || PLACEHOLDER_WORDS.has(v.toLowerCase())
+    || /example/i.test(v)
+    || /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(v);
+}
+
+// A file path, as in `grep requirepass /etc/redis/redis.conf`: path characters
+// only, a slash, and a leading /, ./, ../, ~/ or a file extension.
+const filePath = (v) => /^[\w.~-]*\/[\w./-]*$/.test(v) && (/^(?:\/|\.\.?\/|~\/)/.test(v) || /\.[A-Za-z]{1,5}$/.test(v));
+
+// A value that is a placeholder or a file path once quotes, backticks, and
+// trailing punctuation around it are dropped (as in Markdown: `requirepass /etc/redis`).
+const keepAsPlaceholder = (v) => { const w = v.replace(/^["'`[(]+/, '').replace(/["'`,;:.)\]}]+$/, ''); return placeholder(w) || filePath(w); };
+
 // Returns {text, counts}; counts maps NAME or pattern name to replacements.
 function redact(text, cfg, known, compiled = compile(cfg), index = buildKnown(known, cfg)) {
   const counts = {};
@@ -196,11 +218,12 @@ function redact(text, cfg, known, compiled = compile(cfg), index = buildKnown(kn
       return ph(name, m);
     });
   }
-  for (const { name, re } of compiled) {
+  for (const { name, re, skipPlaceholders } of compiled) {
     text = outside(text, (seg) => seg.replace(re, (m, ...args) => {
       const g = typeof args[0] === 'string' ? args[0] : null;
       const v = g ?? m;
       if (allow.has(sha8(v))) return m;
+      if (skipPlaceholders && keepAsPlaceholder(v)) return m;
       hit(name);
       if (g === null) return ph(name, m);
       const i = m.lastIndexOf(g);
@@ -220,7 +243,8 @@ function buildKnown(known, cfg) {
   return { re: new RegExp(alt.join('|'), 'g'), names };
 }
 
-const compile = (cfg) => cfg.patterns.map((p, i) => ({ name: p.name, re: regex(cfg, 'patterns', i, p.regex, 'g') }));
+// skipPlaceholders: a value that is a placeholder or a file path is kept.
+const compile = (cfg) => cfg.patterns.map((p, i) => ({ name: p.name, re: regex(cfg, 'patterns', i, p.regex, 'g'), skipPlaceholders: p.skipPlaceholders === true }));
 
 function log(tool, counts) {
   const file = process.env.HUSH_LOG || path.join(os.homedir(), '.local/state/hush/log.jsonl');
@@ -228,4 +252,4 @@ function log(tool, counts) {
   fs.appendFileSync(file, JSON.stringify({ ts: new Date().toISOString(), tool, counts }) + '\n', { mode: 0o600 });
 }
 
-module.exports = { allowSet, buildKnown, loadConfig, loadKnown, redact, compile, expand, log, sha8, failure, regex, at, ROOT, DEFAULT_FILE };
+module.exports = { placeholder, filePath, allowSet, buildKnown, loadConfig, loadKnown, redact, compile, expand, log, sha8, failure, regex, at, ROOT, DEFAULT_FILE };

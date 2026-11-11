@@ -144,3 +144,15 @@ test('linear time: every pattern on 32,000-character and 3 MB adversarial lines'
   console.log(`# worst pattern time: ${worst.ms.toFixed(0)} ms (${worst.name}, ${JSON.stringify(worst.f)} x ${worst.n})`);
   assert.ok(worst.ms < 1500, JSON.stringify(worst));
 });
+
+test('url-password-any, requirepass, and pass-flag keep placeholders, documented defaults, and file paths', () => {
+  const keep = ['https://user:password@host.example/x', 'amqp://user:pass@mq.example:5672', 'mongodb://admin:<password>@db.example/app',
+    'https://user:changeme@host.example', 'tool --password changeme', 'tool --password <password>', 'tool --password /run/secrets/db_password',
+    'grep requirepass /etc/redis/redis.conf', 'requirepass foobared', 'masterauth <password>', 'tool --password ./secrets/pw.txt'];
+  for (const t of keep) assert.equal(red(t).text, t, t);
+  for (const [name, make] of [['url-password-any', (v) => `https://deploy:${v}@git.example/r.git`], ['requirepass', (v) => `requirepass ${v}`], ['pass-flag', (v) => `tool --password ${v}`]]) {
+    const v = hex(10);
+    const r = red(make(v));
+    assert.ok(!r.text.includes(v) && r.counts[name] === 1, name);
+  }
+});

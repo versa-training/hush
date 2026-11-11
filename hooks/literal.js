@@ -2,7 +2,7 @@
 // Finds literal passwords in a shell command text (the model's own Bash and
 // Monitor commands). Used by hooks/block.js. Never returns a value: a finding
 // is {rule, sha, length}.
-const { sha8 } = require('./hush-lib');
+const { sha8, placeholder, filePath } = require('./hush-lib');
 
 // In the cooked text, EXP stands for a variable or command substitution and SP
 // for whitespace inside one shell word, so a quoted value stays one word.
@@ -138,22 +138,6 @@ const SHAPES = [
 
 // Names in NAME=value that hold a setting about a secret, not the secret.
 const NOT_SECRET_NAME = /_(?:FILE|PATH|DIR|URL|URI|HOST|PORT|USER|USERNAME|NAME|TYPE|MODE|PROVIDER|METHOD|ENABLED|HEADER|ENDPOINT|ID|DOMAIN|ISSUER|AUDIENCE|SCOPE|REGION|TTL|TIMEOUT|EXPIRY|LENGTH)$/;
-
-const PLACEHOLDER_WORDS = new Set(['changeme', 'password', 'passwd', 'example', 'secret', 'redacted', 'placeholder', 'yourpassword', 'mypassword',
-  'your_password', 'your-password', 'my_password', 'my-password', 'pass', 'pwd', 'token', 'yourtoken', 'your_token', 'your-token', 'none', 'null', 'undefined']);
-
-// True when v is a placeholder, not a value: <password>, {{x}}, [hush ...],
-// xxx, ***, ..., a placeholder word, or an ALL_CAPS name (a variable written without $).
-function placeholder(v) {
-  return /^(?:<[^<>]*>?|\{\{[^}]*\}\}|\[hush\b.*|x{3,}|X{3,}|\*{3,}|\.{3,}|\?{3,}|…+|%s)$/.test(v)
-    || PLACEHOLDER_WORDS.has(v.toLowerCase())
-    || /example/i.test(v)
-    || /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(v);
-}
-
-// A file path, as in `grep requirepass /etc/redis/redis.conf`: path characters
-// only, a slash, and a leading /, ./, ../, ~/ or a file extension.
-const filePath = (v) => /^[\w.~-]*\/[\w./-]*$/.test(v) && (/^(?:\/|\.\.?\/|~\/)/.test(v) || /\.[A-Za-z]{1,5}$/.test(v));
 
 const strip = (v) => v.replace(/^["'[(]+/, '').replace(/["',\])};]+$/, '');
 
