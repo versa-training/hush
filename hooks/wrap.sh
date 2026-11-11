@@ -25,6 +25,8 @@ coproc __HUSH { { node "$__hush_d/filter.js" "$__hush_n" "$__hush_m" 3>&"$__hush
 exec {__hush_a}<&"${__HUSH[0]}" {__hush_i}>&"${__HUSH[1]}"
 read -r -u "$__hush_a" __hush_p || return 1
 wait "$__HUSH_PID" 2>/dev/null
+# The header gives the filter the command text, for strict masking.
+printf '\0HUSHCMD:%s\0%s\0' "$__hush_n" "${BASH_EXECUTION_STRING-}" >&"$__hush_i" || return 1
 exec 1>&"$__hush_i" 2>&1 {__hush_i}>&- {__hush_o}>&-
 unset __hush_i __hush_o __hush_m
 __hush_on=$$

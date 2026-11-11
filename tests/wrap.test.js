@@ -110,7 +110,7 @@ test('session-start.js as a hook: writes CLAUDE_ENV_FILE for every source; warns
 test('session-start.js: plugin path with a quote and a space is quoted', () => {
   const dir = path.join(tmp, "it's a dir");
   fs.mkdirSync(dir);
-  for (const f of ['wrap.sh', 'filter.js', 'hush-lib.js']) fs.copyFileSync(path.join(HOOKS, f), path.join(dir, f));
+  for (const f of ['wrap.sh', 'filter.js', 'hush-lib.js', 'strict.js']) fs.copyFileSync(path.join(HOOKS, f), path.join(dir, f));
   fs.copyFileSync(path.join(__dirname, '../hush.default.json'), path.join(tmp, 'hush.default.json'));
   const v = hex(24);
   const r = sh(`echo X_TOKEN=${v}`, { envScript: block(dir) });

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 const { loadConfig, loadKnown, buildKnown, compile, redact, log } = require('./hush-lib');
+const { Strict, isStrict, notice } = require('./strict');
 
 let payload;
 try { payload = JSON.parse(require('fs').readFileSync(0, 'utf8')); } catch { process.exit(0); }
@@ -29,9 +30,11 @@ if (!any) process.exit(0);
 
 try {
   const cfg = loadConfig();
+  const command = payload.tool_input && payload.tool_input.command;
+  const strict = tool === 'Bash' && typeof command === 'string' && isStrict(command, cfg);
   let long = false;
   mapStrings(r, (s) => { long = long || s.length >= cfg.minLength; return s; });
-  if (!long) process.exit(0);
+  if (!long && !strict) process.exit(0);
   const known = loadKnown(cfg).values;
   const compiled = compile(cfg);
   const index = buildKnown(known, cfg);
@@ -42,8 +45,17 @@ try {
     return x.text;
   });
   const n = Object.values(counts).reduce((x, y) => x + y, 0);
-  if (n) {
-    if (tool === 'Bash' && typeof out.stdout === 'string') out = { ...out, stdout: `${out.stdout}\n[hush] redacted ${n} secret(s)` };
+  // Strict masking: stdout and stderr of a listed command, each with its own state.
+  let strictCount = 0;
+  if (strict) {
+    const st = (s) => { const m = new Strict(cfg); const t = m.text(s); strictCount += m.count; return t; };
+    if (typeof out === 'string') out = st(out);
+    else out = { ...out, ...Object.fromEntries(['stdout', 'stderr'].filter((k) => typeof out[k] === 'string').map((k) => [k, st(out[k])])) };
+  }
+  if (n || strictCount) {
+    const notes = [n ? `[hush] redacted ${n} secret(s)` : '', strictCount ? notice(strictCount) : ''].filter(Boolean).join('\n');
+    if (tool === 'Bash' && typeof out.stdout === 'string') out = { ...out, stdout: `${out.stdout}\n${notes}` };
+    if (strictCount) counts.strict = strictCount;
     emit(out);
     try { log(tool || 'unknown', counts); } catch { /* log is best effort */ }
   }

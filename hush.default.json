@@ -4,6 +4,20 @@
   "allow": [],
   "allowLiterals": ["a942b37c"],
   "blockLiterals": true,
+  "strictCommands": [
+    "\\b(?:docker|podman)\\s+(?:container\\s+|image\\s+|network\\s+|volume\\s+)?inspect\\b",
+    "\\b(?:docker[\\s-]compose|podman-compose)\\b[^\\n|;&]*\\sconfig\\b",
+    "(?:^|[;&|({\\n]|\\bsudo\\s)\\s*(?:env|printenv)\\s*(?=$|[;&|)}\\n>])",
+    "(?:^|[;&|({\\n]|\\bsudo\\s)\\s*set\\s*(?=$|[;&|)}\\n>])",
+    "(?:^|[;&|({\\n]|\\bsudo\\s)\\s*(?:export|declare|typeset)(?:\\s+-[A-Za-z]+)*\\s*(?=$|[;&|)}\\n>])",
+    "\\bclever\\s+env\\b",
+    "\\bkubectl\\b[^\\n|;&]*\\s(?:get|describe)\\b[^\\n|;&]*\\ssecrets?(?=/|\\s|$|[;&|)])",
+    "\\bsystemctl\\b[^\\n|;&]*\\s(?:show\\b[^\\n|;&]*Environment|show-environment\\b)",
+    "\\b(?:cat|less|more|head|tail|bat|batcat)\\b[^\\n|;&]*[\\s/'\\\"=]\\.env[\\w.-]*(?=$|[\\s'\\\";&|)])",
+    "\\bps\\s+(?:[^\\n|;&]*\\s)?[A-Za-z]*e[A-Za-z]*(?=$|[\\s;&|)])",
+    "/proc/[^\\s/]+/environ\\b",
+    "(?:^|[;&|({\\n]|\\bsudo\\s)\\s*history\\b"
+  ],
   "patterns": [
     {"name": "env", "regex": "(?<![A-Za-z0-9_])[A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|DSN|CREDENTIAL|AUTH|key|token|secret|password|passwd|dsn|credential|auth)[A-Za-z0-9_]*[\"']?\\s*[=:]\\s*[\"']?(?!\\$[A-Za-z_{(])([^\\s\"',;]{12,})"},
     {"name": "jwt", "regex": "eyJ[A-Za-z0-9_-]{5,}\\.eyJ[A-Za-z0-9_-]{5,}\\.[A-Za-z0-9_-]{5,}"},

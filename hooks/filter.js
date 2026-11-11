@@ -4,15 +4,20 @@
 // Reads the command's output on stdin, writes the redacted text to fd 3 (the
 // original stdout), and writes one ack line to stdout when it reads the end
 // marker: "0" when all output so far was redacted, "1" when it was withheld.
+// The stream may start with a header, `\0HUSHCMD:<nonce>\0<bash -c string>\0`,
+// written by wrap.sh; when the command in it matches strictCommands, the
+// output is also strictly masked (hooks/strict.js).
 // Usage: node filter.js <nonce> <bash|monitor>
 const fs = require('fs');
 const { StringDecoder } = require('string_decoder');
 const { loadConfig, loadKnown, buildKnown, compile, redact, log } = require('./hush-lib');
+const { Strict, isStrict, commandOf } = require('./strict');
 
 const OUT = Number(process.env.HUSH_FILTER_FD || 3);
 const nonce = process.argv[2] || '';
 const mode = process.argv[3] || 'bash';
 const MARK = `\0HUSH:${nonce}\0`;
+const HEAD = `\0HUSHCMD:${nonce}\0`;
 // A line longer than this is cut and redacted in parts.
 const CAP = Number(process.env.HUSH_FILTER_CAP || 65536);
 // The tail of a cut line is kept for the next part, so a value up to this length is not split.
@@ -53,6 +58,8 @@ let pending = '';
 let lastChar = '\n';
 let marked = false;
 let idle = null;
+let headed = false;
+let strict = null;
 
 const withhold = (e) => {
   if (failed) return;
@@ -72,8 +79,9 @@ function emit(text) {
   if (!text || failed) return;
   const r = redact(text, ctx.cfg, ctx.known, ctx.compiled, ctx.index);
   for (const [k, n] of Object.entries(r.counts)) { counts[k] = (counts[k] || 0) + n; total += n; }
-  writeAll(OUT, r.text);
-  lastChar = r.text[r.text.length - 1];
+  const out = strict ? strict.text(r.text) : r.text;
+  writeAll(OUT, out);
+  lastChar = out[out.length - 1];
 }
 
 // Writes every complete line of pending, holding an open PEM block; cuts an overlong line.
@@ -97,18 +105,36 @@ function drain(all) {
 
 function finish() {
   drain(true);
-  if (!failed && mode === 'bash' && total) {
-    writeAll(OUT, `${lastChar === '\n' ? '' : '\n'}[hush] redacted ${total} secret(s)\n`);
-    try { log('Bash', counts); } catch { /* log is best effort */ }
-  }
+  if (failed || mode !== 'bash') return;
+  const notes = [];
+  if (total) notes.push(`[hush] redacted ${total} secret(s)`);
+  if (strict && strict.count) notes.push(strict.notice());
+  if (!notes.length) return;
+  writeAll(OUT, `${lastChar === '\n' ? '' : '\n'}${notes.join('\n')}\n`);
+  if (strict && strict.count) counts.strict = strict.count;
+  try { log('Bash', counts); } catch { /* log is best effort */ }
 }
 
 const ack = () => { try { writeAll(1, failed ? '1\n' : '0\n'); } catch { /* shell is gone */ } };
 
 const dec = new StringDecoder('utf8');
+// Reads the header at the start of the stream. Returns false while it is incomplete.
+function header() {
+  if (pending.length < HEAD.length && HEAD.startsWith(pending)) return false;
+  if (pending.startsWith(HEAD)) {
+    const e = pending.indexOf('\0', HEAD.length);
+    if (e < 0) return false;
+    if (ctx && isStrict(commandOf(pending.slice(HEAD.length, e)), ctx.cfg)) strict = new Strict(ctx.cfg);
+    pending = pending.slice(e + 1);
+  }
+  headed = true;
+  return true;
+}
+
 process.stdin.on('data', (chunk) => {
   try {
     pending += dec.write(chunk);
+    if (!headed && !header()) return;
     if (!marked) {
       const i = pending.indexOf(MARK);
       if (i >= 0) {
@@ -129,6 +155,7 @@ process.stdin.on('end', () => {
   clearTimeout(idle);
   try {
     pending += dec.end();
+    if (!headed && !header()) pending = '';
     if (marked) drain(true); else finish();
   } catch (e) { withhold(e); }
   if (!marked) ack();

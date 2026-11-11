@@ -15,8 +15,14 @@ const checks = {
     && !redact(`["redis-cli", "-a", "${fake}", "ping"]`, cfg, values).text.includes(fake),
   block: () => require('../hooks/literal').findLiterals(`redis-cli -a ${fake} ping`, cfg, new Set()).length === 1
     && require('../hooks/literal').findLiterals('redis-cli -a "$REDIS_PASSWORD" ping', cfg, new Set()).length === 0,
+  strict: () => {
+    const { Strict, isStrict } = require('../hooks/strict');
+    const m = new Strict(cfg);
+    return isStrict('docker inspect app', cfg) && !isStrict('docker ps', cfg)
+      && !m.text(`{"Env": ["HUSH_SELFTEST=${fake}"]}\n`).includes(fake) && m.count === 1;
+  },
 };
 const failed = Object.entries(checks).filter(([, f]) => { try { return !f(); } catch { return true; } }).map(([k]) => k);
-console.log(`blockLiterals: ${cfg.blockLiterals !== false}, allowLiterals: ${(cfg.allowLiterals || []).length}`);
+console.log(`blockLiterals: ${cfg.blockLiterals !== false}, allowLiterals: ${(cfg.allowLiterals || []).length}, strictCommands: ${(cfg.strictCommands || []).length}`);
 console.log(`self-test: ${failed.length ? `FAILED (${failed.join(', ')})` : 'ok'}`);
 process.exit(failed.length ? 1 : 0);
