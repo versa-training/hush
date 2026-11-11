@@ -6,6 +6,10 @@ hush is a Claude Code plugin (Node 22 or newer, no dependencies). A `PostToolUse
 
 - Tests: `npm test` (`node --test tests/*.test.js`)
 - Config check and self-test: `node scripts/check.js`
+- Add a pattern or strict command to the user config: `node scripts/add-pattern.js` (fake test line required)
+- Register a known value from stdin: `node scripts/add-known.js`
+- Scrub values from transcripts and task output: `node scripts/scrub.js` (dry run by default)
+- Leak-response procedure for agents: `skills/respond-to-leak/SKILL.md`
 
 ## Rules
 

@@ -227,6 +227,14 @@ node /path/to/hush/scripts/check.js
 
 In a clone, `npm run check` runs the same script. It lists each listed file as exists or missing, with its value count, counts patterns, allow entries, and known values, and runs a self-test with a random fake token that covers a pattern, an argv pattern, the literal block, and strict masking. It never prints a value.
 
+## When a secret leaks
+
+If a secret reaches the model's output unredacted, the plugin ships a skill, `respond-to-leak`, that walks an agent through the response: classify the miss, extend detection, scrub the transcripts, and record it. Three scripts do the work; none takes a secret as an argument and none prints one.
+
+- `scripts/add-pattern.js --name <name> --regex <source> --test-file <path>` adds a pattern to the user config (`$HUSH_CONFIG` or `~/.config/hush/config.json`). The test file holds one fake line the pattern must redact. It refuses a pattern that does not redact that line, is invalid, matches the empty string, or takes more than 100 ms on a 32,000-character line. `--strict-command <regex>` adds a strict command. Add-only, atomic, with a timestamped backup; `--dry-run` previews.
+- `scripts/add-known.js` reads one value from stdin and appends it to `~/.config/hush/known-values` (mode 600), which the default config lists in `files`. It prints the sha8 and a count, and refuses values shorter than `minLength`.
+- `scripts/scrub.js --path <dir or file>` replaces values with the placeholder in transcripts and task output. Values come from stdin or `--known`. It is a dry run unless `--apply`, handles JSON-escaped forms, skips binary files, symlinks, and files modified in the last 60 seconds (`--include-active` overrides), and prints file names, counts, and sha8 fingerprints. A value split across two lines or records is not found.
+
 ## Fails closed
 
 Claude Code ignores a malformed hook output and shows the original text. So when the hook throws after reading a payload with a tool response, for example on a malformed config, it prints a valid output of the same shape with every string replaced by:
