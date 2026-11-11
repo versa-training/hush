@@ -171,3 +171,29 @@ test('filter: monitor mode masks line by line with no notice', async () => {
   await new Promise((res) => p.on('close', res));
   assert.ok(!out.includes('strict mask'));
 });
+
+test('strictCommands: exec env in containers and pods, docker global options, /usr/bin/env and command env, readers of .env files', () => {
+  const yes = ['docker exec app env', 'docker exec -it app printenv', 'docker run --rm alpine env', 'podman exec -u 0 app /usr/bin/env',
+    'kubectl exec -n versa pod/app -- env', 'kubectl exec app -c web -- printenv', 'docker --context prod inspect app', 'docker -H tcp://h:2375 container inspect x',
+    'docker --host=unix:///run/x.sock inspect x', '/usr/bin/env', '/bin/env | sort', 'command env', 'grep TOKEN .env', 'sed -n 1,5p .env.local',
+    "awk -F= '{print $1}' .env.production", 'tail -n 3 .env', 'bat .env', 'more .env'];
+  const no = ['docker exec app env FOO=1 node x', 'kubectl exec app -- ls', 'docker exec app ls /env', 'docker run --name inspect x', 'command -v env',
+    'grep x .env.example', 'cat .env.sample', 'sed -n 1p .env.template', 'grep -rn foo src'];
+  for (const c of yes) assert.ok(isStrict(c, cfg), `should match: ${c}`);
+  for (const c of no) assert.ok(!isStrict(c, cfg), `should not match: ${c}`);
+});
+
+test('strictCommands: every default regex runs in under 1 s on 32,000-character adversarial commands', () => {
+  let worst = { ms: 0 };
+  for (const f of ['docker -a ', 'docker -a b ', 'docker --x=y ', 'docker exec ', 'kubectl exec -- ', 'kubectl ', 'grep .env ', 'cat x/.env', '/usr/bin/env ', 'command env ', 'docker compose ', 'cat ', ' a']) {
+    const s = f.repeat(Math.ceil(32000 / f.length)).slice(0, 32000);
+    for (const r of cfg.strictCommands) {
+      const t0 = performance.now();
+      new RegExp(r, 'm').test(s);
+      const ms = performance.now() - t0;
+      if (ms > worst.ms) worst = { ms, f, r: r.slice(0, 30) };
+    }
+  }
+  console.log(`# worst strict command time: ${worst.ms.toFixed(0)} ms (${JSON.stringify(worst.f)})`);
+  assert.ok(worst.ms < 1000, JSON.stringify(worst));
+});
