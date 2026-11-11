@@ -12,13 +12,13 @@
 
 <table>
 <tr>
-<td align="center" width="33.3%"><h3>Every tool</h3>Bash, Read, Grep, MCP tools, and the rest pass through one <code>PostToolUse</code> hook</td>
+<td align="center" width="33.3%"><h3>Every tool</h3>Bash, Read, Grep, MCP tools, and the rest pass through a <code>PostToolUse</code> hook; Bash and Monitor output is also filtered as it streams</td>
 <td align="center" width="33.3%"><h3>13 patterns</h3>plus every known value from the dotenv and JSON files you list</td>
 <td align="center" width="33.3%"><h3>Withheld on error</h3>if redaction throws, the output is withheld, never passed through</td>
 </tr>
 </table>
 
-**[What it does](#what-it-does) · [Install](#install) · [Config](#config) · [Fails closed](#fails-closed) · [Limits](#limits) · [Development](#development)**
+**[What it does](#what-it-does) · [Output wrapper](#output-wrapper) · [Install](#install) · [Config](#config) · [Fails closed](#fails-closed) · [Limits](#limits) · [Development](#development)**
 
 </div>
 
@@ -44,6 +44,31 @@ hush finds secrets from two sources, in this order:
 | Known values | Values of `minLength` characters or more from the files you list, longest first. |
 | Patterns | Env-style assignments, JWTs, database URL passwords, DSNs, PEM private keys, Bearer headers, and GitHub, Anthropic, OpenAI, AWS, Google, Slack, and Stripe tokens. |
 
+## Output wrapper
+
+Claude Code lets a `PostToolUse` hook replace the output of a successful call only. A Bash command that exits non-zero, a Monitor event, and the output file of a background command never pass through it. So a second hook, `hooks/wrap.js` on `PreToolUse` for `Bash|Monitor`, rewrites the command to:
+
+```text
+. '<plugin>/hooks/wrap.sh' <nonce> bash || { printf '%s\n' '[hush] output withheld: wrapper unavailable'; exit 125; }
+<the original command, byte for byte>
+```
+
+`wrap.sh` runs in the shell that runs the command. It sends that shell's stdout and stderr through `hooks/filter.js`, which redacts each line with the same known values, patterns, allow list, and placeholders as the `PostToolUse` hook. At exit it waits until the filter has written everything. The command itself runs unchanged in the same shell, so its exit code, `cd`, `set -e`, heredocs, quotes, comments, `exit`, and `&` jobs behave as before.
+
+- Bash output ends with `[hush] redacted N secret(s)` when the filter redacted something. The `PostToolUse` hook then finds nothing left and adds nothing.
+- Monitor events are redacted line by line, with no notice. A line is written as soon as it ends; a partial line after 250 ms of silence.
+- Fails closed: if `node` or `filter.js` is missing, the command does not run, the output is the one line above, and the exit code is 125. If the filter throws or dies, the output from then on is `[hush] output withheld: ...` and the exit code is 125.
+- Cost, measured as the median of 20 calls: about 30 ms added to a call with no output and about 36 ms to a call with 1 MB of output.
+
+Limits of the wrapper:
+
+- stdout and stderr arrive merged, in the order written. Claude Code merges them for Bash anyway.
+- NUL bytes are dropped and invalid UTF-8 becomes U+FFFD.
+- Bash error messages name a line two higher than without the wrapper, and `$!` before the first `&` job holds the filter's starter pid instead of being empty.
+- A line longer than 64 KB is cut at a space where it can be, keeping its last 4 KB for the next part. A value longer than 4 KB that crosses a cut is split. A PEM private key block is held until its end line, up to 64 KB.
+- A command that sets its own `EXIT` trap or ends with `exec` returns before the filter is done: the model gets the output only partly or not at all. What arrives later in the output file is redacted.
+- When another `PreToolUse` hook also returns `updatedInput` for the same call, the hook that finishes last wins and the other rewrite is lost. Hooks run in parallel and each gets the original input.
+
 ## Install
 
 From the GitHub marketplace, which needs read access to this repository:
@@ -60,6 +85,8 @@ claude --plugin-dir /path/to/hush
 ```
 
 You need Node 22 or newer on PATH.
+
+Plugins load when a claude process starts: after installing or updating hush, restart every running claude process; `/clear` is not enough.
 
 ## Config
 

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-hush is a Claude Code plugin (Node 22 or newer, no dependencies). One `PostToolUse` hook, `hooks/redact.js`, redacts secrets from the output of every tool. `CLAUDE.md` is a symlink to this file.
+hush is a Claude Code plugin (Node 22 or newer, no dependencies). A `PostToolUse` hook, `hooks/redact.js`, redacts secrets from the output of every tool. A `PreToolUse` hook for Bash and Monitor, `hooks/wrap.js`, rewrites the command so its output streams through `hooks/filter.js` (set up by `hooks/wrap.sh`), which covers failed commands, Monitor events, and background output. `CLAUDE.md` is a symlink to this file.
 
 ## Commands
 
