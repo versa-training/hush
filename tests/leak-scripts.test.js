@@ -234,3 +234,12 @@ test('scrub: a value split across two records is not found', () => {
   const r = run('scrub.js', ['--path', f, '--apply'], { input: secret, env: { HUSH_CONFIG: path.join(d, 'none.json') } });
   assert.match(r.out, /0 match\(es\) in 0 of 1/);
 });
+
+test('respond-to-leak skill: every command names the plugin root through ${CLAUDE_PLUGIN_ROOT} and an existing script', () => {
+  const body = fs.readFileSync(path.join(__dirname, '../skills/respond-to-leak/SKILL.md'), 'utf8');
+  assert.ok(!body.includes('$HUSH'));
+  const refs = [...body.matchAll(/node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/([\w-]+\.js)"/g)].map((m) => m[1]);
+  assert.ok(refs.length >= 5);
+  for (const r of refs) assert.ok(fs.existsSync(S(r)), r);
+  assert.equal((body.match(/scripts\//g) || []).length - 1, refs.length, 'every script command uses the quoted root');
+});
