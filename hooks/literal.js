@@ -115,6 +115,8 @@ const BEFORE = '[\\s\\u0002"\',\\[]';
 // A flag and its value: whitespace, or `", "` between two quoted list items.
 const BETWEEN = `(?:["']${S}*,${S}*|${S}+)`;
 const V = '([^\\s\\u0002]*)';
+// The text of the simple command before index i, up to 400 characters back.
+const lastCommand = (text, i) => { const w = text.slice(Math.max(0, i - 400), i); return w.slice(Math.max(...['\n', '|', ';', '&'].map((c) => w.lastIndexOf(c))) + 1); };
 const PG_TOOLS = /\b(?:psql|pg_\w+|createdb|dropdb|createuser|dropuser|pgbench|vacuumdb|reindexdb|clusterdb)\b/;
 
 // rule, regex on the cooked text (group 1 is the value), the fix shown, and an optional check.
@@ -122,14 +124,15 @@ const SHAPES = [
   { rule: 'redis-cli', cmd: /\bredis-cli\b/, re: `${BEFORE}(?:-a|--pass)${BETWEEN}${V}`, fix: 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ..., or redis-cli -a "$REDIS_PASSWORD"' },
   { rule: 'requirepass', re: `\\b(?:requirepass|masterauth)["']?${BETWEEN}${V}`, fix: 'redis-server --requirepass "$REDIS_PASSWORD"' },
   { rule: 'password-flag', re: `(?<![\\w-])--(?:http-|ftp-|proxy-)?pass(?:word)?(=|${BETWEEN})${V}`, fix: '--password="$DB_PASSWORD", or the tool\'s password file option', group: 2,
-    skip: (text, m) => m[1] !== '=' && PG_TOOLS.test(text.slice(Math.max(text.lastIndexOf('\n', m.index), text.lastIndexOf('|', m.index), text.lastIndexOf(';', m.index), text.lastIndexOf('&', m.index), 0), m.index)) },
+    skip: (text, m) => m[1] !== '=' && PG_TOOLS.test(lastCommand(text, m.index)) },
   { rule: 'mysql-p', cmd: /\b(?:mysql|mariadb|mysqldump|mysqladmin|mysqlimport|mysqlshow|mysqlcheck|mariadb-dump|mariadb-admin)\b/, re: `${BEFORE}-p([^\\s\\u0002]+)`, fix: 'MYSQL_PWD="$DB_PASSWORD" mysql ..., or --defaults-extra-file=<file>' },
   { rule: 'sshpass', re: `\\bsshpass${S}+-p${S}*${V}`, fix: 'SSHPASS="$SSH_PASSWORD" sshpass -e ..., or sshpass -f <file>' },
   { rule: 'curl-user', cmd: /\bcurl\b/, re: `${BEFORE}(?:-u${S}*|--user(?:=|${S}+))${V}`, fix: 'curl -u "user:$API_PASSWORD" ..., or curl --netrc-file <file>', user: true },
   { rule: 'authorization', cmd: /\b(?:curl|wget)\b/, re: `[Aa]uthorization:${S}*(?:(?:[Bb]earer|[Bb]asic|[Tt]oken|[Bb]ot|[Dd]igest)${S}+)?${V}`, fix: 'curl -H "Authorization: Bearer $API_TOKEN" ..., or -H @<header-file>' },
   { rule: 'env-password', re: `(?<![\\w$])(?:PGPASSWORD|MYSQL_PWD|REDISCLI_AUTH|SSHPASS)=${V}`, fix: 'PGPASSFILE=<file> psql ..., or PGPASSWORD="$DB_PASSWORD" psql ...' },
   { rule: 'url-password', re: `\\b[A-Za-z][A-Za-z0-9+.-]{1,20}://[^\\s\\u0002/@:]*:([^\\s\\u0002@/]+)@`, fix: '"postgres://user:${DB_PASSWORD}@host/db", or a URL read from a file' },
-].map((s) => ({ ...s, re: new RegExp(s.re, 'g') }));
+].map((s) => ({ ...s, re: new RegExp(s.re, 'gd') }));
+
 
 const PLACEHOLDER_WORDS = new Set(['changeme', 'password', 'passwd', 'example', 'secret', 'redacted', 'placeholder', 'yourpassword', 'mypassword',
   'your_password', 'your-password', 'my_password', 'my-password', 'pass', 'pwd', 'token', 'yourtoken', 'your_token', 'your-token', 'none', 'null', 'undefined']);
@@ -149,8 +152,9 @@ const filePath = (v) => /^[\w.~-]*\/[\w./-]*$/.test(v) && (/^(?:\/|\.\.?\/|~\/)/
 
 const strip = (v) => v.replace(/^["'[(]+/, '').replace(/["',\])};]+$/, '');
 
-// Checks one value; returns a finding or null.
-function check(s, v, allow) {
+// Checks one value; returns a finding or null. prose(): true when the value
+// sits in a message (see inMessage), where an all-lowercase word is prose.
+function check(s, v, allow, prose = () => false) {
   if (s.user) {
     const i = v.indexOf(':');
     if (i < 0) return null;
@@ -160,9 +164,52 @@ function check(s, v, allow) {
   v = strip(v);
   if (/\$[A-Za-z_{(]|`/.test(v)) return null;
   if (v.length < 6 || v.startsWith('-') || placeholder(v) || filePath(v)) return null;
+  if (/^[a-z]+$/.test(v) && prose()) return null;
   const sha = sha8(v);
   if (allow.has(sha)) return null;
   return { rule: s.rule, sha, length: v.length, fix: s.fix };
+}
+
+// Positions of the characters in set, in order.
+const positions = (text, set) => { const out = []; for (let i = 0; i < text.length; i++) if (set.includes(text[i])) out.push(i); return out; };
+// The index of the first entry of sorted list a that is x or more.
+function first(a, x) {
+  let lo = 0;
+  let hi = a.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (a[mid] < x) lo = mid + 1; else hi = mid; }
+  return lo;
+}
+// The last entry of sorted list a below x, or -1.
+const below = (a, x) => { const i = first(a, x); return i ? a[i - 1] : -1; };
+
+// True when index at of the cooked text lies in a quoted message with
+// spaces: an argument of echo or printf, of `git commit` or `git tag` after
+// -m or --message, or of `gh pr create` after --title or --body. memo holds
+// per-text indexes and results, so many matches in one text stay linear.
+function inMessage(text, at, memo) {
+  memo.sp ||= positions(text, ' \n');
+  memo.sep ||= positions(text, '\n|;&(');
+  memo.words ||= new Map();
+  const ws = below(memo.sp, at);
+  if (memo.words.has(ws)) return memo.words.get(ws);
+  const next = memo.sp[first(memo.sp, at)];
+  const end = next === undefined ? text.length : next;
+  memo.inner ||= positions(text, SP);
+  const sp = memo.inner[first(memo.inner, ws + 1)];
+  let r = false;
+  if (sp !== undefined && sp < end) {
+    const start = below(memo.sep, ws + 1) + 1;
+    const tokens = text.slice(start, Math.min(ws + 1, start + 400)).split(' ').filter(Boolean);
+    while (tokens.length && (/^[A-Za-z_]\w*=/.test(tokens[0]) || ['sudo', 'command', 'builtin', 'exec'].includes(tokens[0]))) tokens.shift();
+    const prev = ws > start ? text.slice(Math.max(start, below(memo.sp, ws) + 1), ws) : '';
+    const head = text.slice(ws + 1, Math.min(end, ws + 20));
+    const [cmd] = tokens;
+    if (cmd === 'echo' || cmd === 'printf') r = true;
+    else if (cmd === 'git' && (tokens.includes('commit') || tokens.includes('tag'))) r = /^-[A-Za-z]*m$|^--message$/.test(prev) || /^(?:-[A-Za-z]*m|--message=)./.test(head);
+    else if (cmd === 'gh' && tokens[1] === 'pr' && tokens[2] === 'create') r = /^(?:-[tb]|--title|--body)$/.test(prev) || /^--(?:title|body)=./.test(head);
+  }
+  memo.words.set(ws, r);
+  return r;
 }
 
 // Returns the findings in one command text: [{rule, sha, length, fix}]. A
@@ -175,16 +222,20 @@ function findLiterals(command, cfg, allow) {
   while (todo.length) {
     const [src, depth] = todo.pop();
     const { text, subs } = cook(src);
+    const memo = {};
     if (depth < 8) for (const x of subs) if (x.trim()) todo.push([x, depth + 1]);
-    const segs = SHAPES.some((s) => s.cmd && s.cmd.test(text)) ? text.split(/[\n|;&]/) : [];
+    const segs = SHAPES.some((s) => s.cmd && s.cmd.test(text)) ? [...text.matchAll(/[^\n|;&]+/g)] : [];
     for (const s of SHAPES) {
+      // [text searched, its offset in the cooked text]
       const parts = [];
-      if (!s.cmd) parts.push(text);
-      else for (const seg of segs) { const k = seg.search(s.cmd); if (k >= 0) parts.push(seg.slice(k)); }
-      for (const part of parts) {
+      if (!s.cmd) parts.push([text, 0]);
+      else for (const seg of segs) { const k = seg[0].search(s.cmd); if (k >= 0) parts.push([seg[0].slice(k), seg.index + k]); }
+      for (const [part, off] of parts) {
         for (const m of part.matchAll(s.re)) {
           if (s.skip && s.skip(part, m)) continue;
-          const f = check(s, m[s.group || 1] || '', allow);
+          const g = s.pick ? s.pick(m) : s.group || 1;
+          if (m[g] === undefined) continue;
+          const f = check(s, m[g], allow, () => inMessage(text, off + m.indices[g][0], memo));
           if (f) found.push(f);
         }
       }

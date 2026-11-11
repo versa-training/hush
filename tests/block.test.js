@@ -172,7 +172,8 @@ test('linear time: detection on 32,000-character and 1 MB adversarial commands',
   const cfg = loadConfig();
   const allow = allowSet(cfg);
   let worst = 0;
-  for (const f of ['curl ', 'curl -u a', 'redis-cli ', 'mysql ', 'a', '"', "'", '$(', '`', '${', 'https://a:', 'PGPASSWORD=', ' -a ', 'Authorization: ', '$($(', '\\', ';']) {
+  for (const f of ['curl ', 'curl -u a', 'redis-cli ', 'mysql ', 'a', '"', "'", '$(', '`', '${', 'https://a:', 'PGPASSWORD=', ' -a ', 'Authorization: ', '$($(', '\\', ';',
+    '--password abcdefg ', 'echo "--password abcdefg ', 'git commit -m "redis-cli -a abcdefgh ', 'psql --password x; ']) {
     for (const n of [32000, 1e6]) {
       const s = f.repeat(Math.ceil(n / f.length)).slice(0, n);
       const t0 = performance.now();
@@ -182,4 +183,17 @@ test('linear time: detection on 32,000-character and 1 MB adversarial commands',
   }
   console.log(`# worst detection time: ${worst.toFixed(0)} ms`);
   assert.ok(worst < 1000);
+});
+
+test('prose in a commit, tag, PR, echo, or printf message: an all-lowercase word after a flag passes; a mixed value is still blocked', () => {
+  const prose = ['git commit -m "feat: support --password option in cli"', 'git commit -m "docs: redis-cli -a requires quoting"',
+    'git commit -am "fix: PGPASSWORD=whatever is read from env"', 'git tag -a v1 -m "redis-cli -a requires quoting"',
+    'gh pr create --title "add --password option" --body "redis-cli -a requires quoting"', 'echo "pass it with --password option"',
+    'printf "%s\\n" "use requirepass setting"', 'git commit -m "x" -m "docs: sshpass -p handling"'];
+  for (const c of prose) assert.equal(hook(c).status, 0, `${c} -> ${hook(c).stderr}`);
+  const v = fake();
+  for (const c of [`git commit -m "fix: redis-cli -a ${v} ping"`, `echo "use --password ${v}"`, `gh pr create --title "x" --body "PGPASSWORD=${v}"`,
+    'redis-cli -a requires', 'echo --password option', 'git commit -m "docs: --password Hunter2xyz"']) {
+    assert.equal(hook(c).status, 2, c.replace(v, '<v>'));
+  }
 });
