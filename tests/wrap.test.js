@@ -1,7 +1,9 @@
 'use strict';
-// Tests for hooks/wrap.js, hooks/wrap.sh, and hooks/filter.js. Each command runs
-// the way Claude Code runs a Bash call: `bash -c "... eval '<command>' && pwd -P
-// >| <cwd file>"` with stdout and stderr on one file.
+// Tests for hooks/session-start.js, hooks/wrap.sh, and hooks/filter.js. Each
+// command runs the way Claude Code 2.1.310 runs a Bash call: one `bash -c`
+// string that sources the shell snapshot, then the session environment script
+// (the env files of SessionStart hooks, joined by newlines), then `eval` of the
+// command and `pwd -P >| <cwd file>`, with stdout and stderr on one file.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -9,7 +11,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { spawnSync, spawn } = require('child_process');
-const { wrap } = require('../hooks/wrap');
+const { block, install } = require('../hooks/session-start');
 const { sha8 } = require('../hooks/hush-lib');
 
 const hex = (n) => crypto.randomBytes(n).toString('hex');
@@ -18,14 +20,27 @@ const cfgFile = path.join(tmp, 'cfg.json');
 fs.writeFileSync(cfgFile, '{}');
 const ENV = { ...process.env, HUSH_CONFIG: cfgFile, HUSH_LOG: path.join(tmp, 'log.jsonl') };
 const FILTER = path.join(__dirname, '../hooks/filter.js');
-const WRAP = path.join(__dirname, '../hooks/wrap.js');
+const START = path.join(__dirname, '../hooks/session-start.js');
+const HOOKS = path.join(__dirname, '../hooks');
+const sq = (c) => `'${c.replace(/'/g, `'"'"'`)}'`;
+
+// The command string Claude Code builds. envScript null: no env file, as without hush.
+function ccCommand(command, envScript, cwdFile) {
+  const parts = ['source /nonexistent/snapshot.sh 2>/dev/null || true'];
+  if (envScript) parts.push(`${envScript.trim()}\n:`);
+  parts.push('shopt -u extglob 2>/dev/null || true');
+  parts.push("{ \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true");
+  parts.push(`eval ${sq(command)}${command.includes('<<') ? '' : ' < /dev/null'}`);
+  parts.push(`pwd -P >| ${cwdFile}`);
+  return parts.join(' && ');
+}
 
 let n = 0;
-function runner(command, { wrapped = true, mode = 'bash', env = {} } = {}) {
+function runner(command, { wrapped = true, env = {}, envScript } = {}) {
   const dir = path.join(tmp, `r${n++}`);
   fs.mkdirSync(dir);
-  const c = wrapped ? wrap(command, mode) : command;
-  const full = `true && eval '${c.replace(/'/g, `'"'"'`)}' && pwd -P >| ${dir}/cwd`;
+  const script = envScript !== undefined ? envScript : wrapped ? block(HOOKS) : null;
+  const full = ccCommand(command, script, `${dir}/cwd`);
   return { dir, full, env: { ...ENV, ...env }, out: path.join(dir, 'out') };
 }
 function sh(command, opts = {}) {
@@ -38,47 +53,73 @@ function sh(command, opts = {}) {
 }
 const text = (r) => r.out.toString('utf8');
 
-// Same exit status, same cwd, same bytes with and without the wrapper. Bash
-// messages name a line two higher, because of the line the wrapper adds in front.
-const lines = (b) => b.toString('latin1').replace(/(line )(\d+)/g, (m, a, d) => a + 'N');
+// Same exit status, same cwd, same bytes with and without the filter, except
+// line numbers: any env script in front of the command shifts them (tested below).
+const outerLines = (b) => b.toString('latin1').replace(/(line )(\d+)/g, '$1N');
 function same(command) {
   const a = sh(command, { wrapped: false });
   const b = sh(command);
   assert.equal(b.status, a.status, `status for ${JSON.stringify(command)}`);
   assert.equal(b.signal, a.signal);
   assert.equal(b.cwd, a.cwd);
-  assert.equal(lines(b.out), lines(a.out), `output for ${JSON.stringify(command)}`);
+  assert.equal(outerLines(b.out), outerLines(a.out), `output for ${JSON.stringify(command)}`);
   return b;
 }
 
-test('wrap.js: hook output keeps other fields and appends the original after a newline', () => {
-  const cmd = `echo 'a' "b" $'c' \\\n# x`;
-  const r = spawnSync('node', [WRAP], { input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: cmd, timeout: 5000, run_in_background: true, description: 'd' } }), encoding: 'utf8' });
-  const o = JSON.parse(r.stdout).hookSpecificOutput;
-  assert.equal(o.hookEventName, 'PreToolUse');
-  assert.equal(o.permissionDecision, undefined);
-  assert.deepEqual({ ...o.updatedInput, command: 0 }, { command: 0, timeout: 5000, run_in_background: true, description: 'd' });
-  assert.ok(o.updatedInput.command.endsWith(`\n${cmd}`));
-  assert.match(o.updatedInput.command, /^\. '[^']*\/wrap\.sh' [0-9a-f]{16} bash \|\| /);
-  const m = spawnSync('node', [WRAP], { input: JSON.stringify({ tool_name: 'Monitor', tool_input: { command: 'tail -f x' } }), encoding: 'utf8' });
-  assert.match(JSON.parse(m.stdout).hookSpecificOutput.updatedInput.command, / monitor \|\| /);
+test('session-start.js: appends the block once, keeps what other hooks wrote', () => {
+  const f = path.join(tmp, 'env-a.sh');
+  fs.writeFileSync(f, 'export OTHER_PLUGIN=1');
+  assert.equal(install(f, HOOKS), true);
+  assert.equal(install(f, HOOKS), false);
+  assert.equal(fs.readFileSync(f, 'utf8'), `export OTHER_PLUGIN=1\n${block(HOOKS)}`);
+  fs.appendFileSync(f, 'export LATER=2\n');
+  assert.equal(install(f, HOOKS), false);
+  const g = path.join(tmp, 'env-b.sh');
+  assert.equal(install(g, HOOKS), true);
+  assert.equal(fs.readFileSync(g, 'utf8'), block(HOOKS));
 });
 
-test('wrap.js: no output for a bad payload or a call without a command', () => {
-  for (const input of ['not json', '{}', JSON.stringify({ tool_name: 'Bash', tool_input: { command: '' } }), JSON.stringify({ tool_name: 'Monitor', tool_input: { url: 'wss://x' } })]) {
-    const r = spawnSync('node', [WRAP], { input, encoding: 'utf8' });
+test('session-start.js as a hook: writes CLAUDE_ENV_FILE for every source; warns when it is unset', () => {
+  const f = path.join(tmp, 'env-hook.sh');
+  for (const source of ['startup', 'resume', 'clear', 'compact']) {
+    const r = spawnSync('node', [START], { input: JSON.stringify({ hook_event_name: 'SessionStart', source }), env: { ...ENV, CLAUDE_ENV_FILE: f }, encoding: 'utf8' });
     assert.deepEqual([r.status, r.stdout], [0, '']);
   }
+  assert.equal(fs.readFileSync(f, 'utf8'), block(path.join(__dirname, '../hooks')));
+  const env = { ...ENV };
+  delete env.CLAUDE_ENV_FILE;
+  const u = spawnSync('node', [START], { input: '{}', env, encoding: 'utf8' });
+  assert.equal(u.status, 0);
+  assert.match(JSON.parse(u.stdout).systemMessage, /CLAUDE_ENV_FILE is not set/);
+  const bad = spawnSync('node', [START], { input: '{}', env: { ...ENV, CLAUDE_ENV_FILE: path.join(tmp, 'no-such-dir', 'f.sh') }, encoding: 'utf8' });
+  assert.equal(bad.status, 0);
+  assert.match(JSON.parse(bad.stdout).systemMessage, /output filter not set up \(Error\)/);
 });
 
-test('wrap.js: plugin path with a quote and a space is quoted', () => {
+test('session-start.js: plugin path with a quote and a space is quoted', () => {
   const dir = path.join(tmp, "it's a dir");
   fs.mkdirSync(dir);
-  for (const f of ['wrap.sh', 'filter.js', 'hush-lib.js']) fs.copyFileSync(path.join(__dirname, '../hooks', f), path.join(dir, f));
+  for (const f of ['wrap.sh', 'filter.js', 'hush-lib.js']) fs.copyFileSync(path.join(HOOKS, f), path.join(dir, f));
   fs.copyFileSync(path.join(__dirname, '../hush.default.json'), path.join(tmp, 'hush.default.json'));
-  const c = wrap('echo ok', 'bash', dir);
-  const p = spawnSync('/bin/bash', ['-c', c], { env: ENV, encoding: 'utf8' });
-  assert.deepEqual([p.status, p.stdout], [0, 'ok\n']);
+  const v = hex(24);
+  const r = sh(`echo X_TOKEN=${v}`, { envScript: block(dir) });
+  assert.equal(r.status, 0);
+  assert.ok(text(r).startsWith('X_TOKEN=[hush env sha:'));
+});
+
+test('the block twice (two SessionStart events, two copies of hush) starts one filter', () => {
+  const v = hex(24);
+  const r = sh(`echo X_TOKEN=${v}; echo "filters: $(pgrep -c -f "hooks/filter.js [0-9a-f]{16} " )"`, { envScript: block(HOOKS) + block(HOOKS) });
+  assert.equal(r.status, 0);
+  assert.equal(text(r).match(/\[hush\] redacted/g).length, 1);
+  assert.ok(!text(r).includes(v));
+});
+
+test('another hook writes to the env script before and after the block: both effects hold', () => {
+  const v = hex(24);
+  const r = sh(`echo "$BEFORE_HUSH $AFTER_HUSH X_TOKEN=${v}"; exit 3`, { envScript: `export BEFORE_HUSH=b1\n${block(HOOKS)}export AFTER_HUSH=a2\n` });
+  assert.equal(r.status, 3);
+  assert.equal(text(r), `b1 a2 X_TOKEN=[hush env sha:${sha8(v)}]\n[hush] redacted 1 secret(s)\n`);
 });
 
 test('exit codes are preserved: 0, 1, 2, 127, exit 42, and a signal', () => {
@@ -137,10 +178,14 @@ for (const [i, c] of TRICKY.entries()) {
   test(`byte-exact against the unwrapped run: case ${i} ${JSON.stringify(c).slice(0, 40)}`, () => { same(c); });
 }
 
-test('bash error messages name a line two higher', () => {
-  const a = text(sh('if then', { wrapped: false }));
-  const b = text(sh('if then'));
-  assert.equal(b, a.replace(/line (\d+)/g, (m, d) => `line ${Number(d) + 2}`));
+test('bash messages and $LINENO name a line one higher, as with any one-line env file', () => {
+  for (const c of ['if then', 'no_such_command_hush; echo $LINENO']) {
+    const a = text(sh(c, { wrapped: false }));
+    const b = text(sh(c));
+    assert.equal(b, a.replace(/line (\d+)/g, (m, d) => `line ${Number(d) + 1}`).replace(/^1$/m, '2'));
+    const o = text(sh(c, { envScript: 'export OTHER_PLUGIN=1' }));
+    assert.equal(o, b);
+  }
 });
 
 test('binary output: text survives, NUL bytes are dropped, invalid UTF-8 becomes U+FFFD', () => {
@@ -201,7 +246,7 @@ test('a 3 MB run of letters with no newline does not stall', () => {
 
 test('monitor mode: each line arrives at once, no notice', async () => {
   const v = hex(24);
-  const r = runner(`for i in 1 2 3; do echo "line $i X_TOKEN=${v}"; sleep 1; done`, { mode: 'monitor' });
+  const r = runner(`for i in 1 2 3; do echo "line $i X_TOKEN=${v}"; sleep 1; done`);
   const p = spawn('/bin/bash', ['-c', r.full], { cwd: tmp, stdio: ['ignore', 'pipe', 'pipe'], env: r.env });
   const seen = [];
   const t0 = Date.now();
@@ -248,14 +293,28 @@ test('fail closed: node missing: command not run, one line, status 125', () => {
 
 test('fail closed: filter.js missing or crashing', () => {
   const dir = fs.mkdtempSync(path.join(tmp, 'nofilter-'));
-  fs.copyFileSync(path.join(__dirname, '../hooks/wrap.sh'), path.join(dir, 'wrap.sh'));
-  const c = wrap('echo hi', 'bash', dir);
-  const p = spawnSync('/bin/bash', ['-c', c], { env: ENV, encoding: 'utf8' });
-  assert.deepEqual([p.status, p.stdout], [125, '[hush] output withheld: wrapper unavailable\n']);
+  fs.copyFileSync(path.join(HOOKS, 'wrap.sh'), path.join(dir, 'wrap.sh'));
+  const marker = path.join(tmp, 'ran-nofilter');
+  const p = sh(`touch ${marker}; echo hi`, { envScript: block(dir) });
+  assert.deepEqual([p.status, text(p)], [125, '[hush] output withheld: wrapper unavailable\n']);
+  assert.ok(!fs.existsSync(marker));
   fs.writeFileSync(path.join(dir, 'filter.js'), 'process.exit(3)');
-  const q = spawnSync('/bin/bash', ['-c', wrap('echo X_TOKEN=abcdefabcdefabcdef', 'bash', dir)], { env: ENV, encoding: 'utf8' });
+  const q = sh(`echo X_TOKEN=${hex(24)}`, { envScript: block(dir) });
   assert.equal(q.status, 125);
-  assert.equal(q.stdout, '[hush] output withheld: filter failed\n');
+  assert.equal(text(q), '[hush] output withheld: filter failed\n');
+});
+
+test('fail closed: wrap.sh missing, or a shell that is not bash 4.1 or newer', () => {
+  const marker = path.join(tmp, 'ran-nowrap');
+  const p = sh(`touch ${marker}`, { envScript: block(path.join(tmp, 'no-such-dir')) });
+  assert.equal(p.status, 125);
+  assert.ok(text(p).endsWith('[hush] output withheld: wrapper unavailable\n'));
+  assert.ok(!fs.existsSync(marker));
+  const env = path.join(tmp, 'posix.sh');
+  fs.writeFileSync(env, block(HOOKS));
+  const d = spawnSync('/bin/sh', ['-c', `. ${env}; touch ${marker}`], { env: ENV, encoding: 'utf8' });
+  assert.equal(d.status, 125);
+  assert.ok(!fs.existsSync(marker));
 });
 
 test('filter.js alone: per-line flush, marker ends the call, ack 0', async () => {
