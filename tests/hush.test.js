@@ -257,3 +257,10 @@ test('performance: hook with 2,000 short strings and 166 known values', () => {
   assert.ok(!JSON.stringify(r.out).includes(vals[3]));
   assert.ok(ms < 200, `${ms} ms`);
 });
+
+test('env pattern: linear time on a long word run', () => {
+  const t0 = performance.now();
+  const r = run(`${'b'.repeat(200000)} X_TOKEN=${hex(20)}`);
+  assert.ok(performance.now() - t0 < 200, `${performance.now() - t0} ms`);
+  assert.equal(r.counts.env, 1);
+});
