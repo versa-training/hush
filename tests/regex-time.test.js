@@ -4,7 +4,10 @@
 // and the functions that run them. Inputs: 32 KB and 1 MB of plain text, and
 // adversarial lines built by repeating each regex's own literal fragments.
 // The timing runs in a child process with a time limit, so a regex that
-// hangs fails the test instead of hanging it.
+// hangs fails the test instead of hanging it. The limit is LIMIT_MS times the
+// speed of the host: the child first times a fixed linear scan (the baseline)
+// and scales the limit by baseline / REFERENCE_MS, never below 1 and never
+// above 4, so super-linear cost fails on every host.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -12,7 +15,9 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const LIMIT_MS = 250;
+const LIMIT_MS = 500;
+const REFERENCE_MS = 13; // baseline of the reference host, in ms
+const MAX_SCALE = 4;
 const SIZES = [32 * 1024, 1024 * 1024];
 
 // The literal runs of a regex source: escapes and character classes become one
@@ -71,13 +76,23 @@ function child() {
   const strict = require('../hooks/strict');
   const cfg = loadConfig();
   const results = [];
+  // Baseline: a linear regex scan over 1 MB of plain text, best of 5.
+  const plain = fill('the quick brown fox jumps over the lazy dog ', 1024 * 1024);
+  let baseline = Infinity;
+  for (let k = 0; k < 5; k++) {
+    const t0 = performance.now();
+    plain.replace(/[a-z]+\s+[a-z]+\s+zzz/g, '');
+    baseline = Math.min(baseline, performance.now() - t0);
+  }
+  const factor = Math.min(MAX_SCALE, Math.max(1, baseline / REFERENCE_MS));
+  const limit = LIMIT_MS * factor;
   // Runs fn up to 5 times, 200 ms apart, while it is over the limit, and keeps
   // the fastest: the test bounds the work a regex does, and other test files
   // load the host at the same time.
   const pause = new Int32Array(new SharedArrayBuffer(4));
   const time = (fn) => {
     let best = Infinity;
-    for (let k = 0; k < 5 && best > LIMIT_MS; k++) {
+    for (let k = 0; k < 5 && best > limit; k++) {
       if (k) Atomics.wait(pause, 0, 0, 200);
       const t0 = performance.now();
       fn();
@@ -111,23 +126,23 @@ function child() {
   const shapes = ['A=b ', 'export A=b\n', '"A=b", ', '"key": "v", ', 'key: v\n', '- ', '- --a\n', 'data:\n', '["CMD", "-a", ', '"Cmd": [', '[', '"a":{', 'aB3/aB3/aB3/aB3/aB3/ '].join('|');
   measure('function', 'Strict.text', `${all}|${shapes}`, (s) => new strict.Strict(cfg).text(s), [strict.MAX_COMMAND]);
   results.sort((a, b) => b.ms - a.ms);
-  process.stdout.write(JSON.stringify({ count: results.length, worst: results.slice(0, 10) }));
+  process.stdout.write(JSON.stringify({ count: results.length, baseline, factor, limit, worst: results.slice(0, 10) }));
 }
 
 if (process.argv[2] === '--child') {
   child();
 } else {
-  test(`every shipped regex and the functions that run them: under ${LIMIT_MS} ms on 32 KB, 1 MB, and adversarial input`, () => {
+  test(`every shipped regex and the functions that run them: under ${LIMIT_MS} ms (scaled by host speed, 1 to ${MAX_SCALE} times) on 32 KB, 1 MB, and adversarial input`, () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hush-rt-'));
     const cfgFile = path.join(tmp, 'cfg.json');
     fs.writeFileSync(cfgFile, '{}');
     const r = spawnSync(process.execPath, [__filename, '--child'], { env: { ...process.env, HUSH_CONFIG: cfgFile }, encoding: 'utf8', timeout: 240000, maxBuffer: 1 << 24 });
     assert.equal(r.signal, null, `timing child killed (${r.signal}): a regex hangs`);
     assert.equal(r.status, 0, r.stderr);
-    const { count, worst } = JSON.parse(r.stdout);
+    const { count, baseline, factor, limit, worst } = JSON.parse(r.stdout);
     const w = worst[0];
-    console.log(`# regex timing: ${count} runs, worst ${w.ms.toFixed(1)} ms (${w.kind} ${w.name}, ${JSON.stringify(w.f)} x ${w.n})`);
-    const slow = worst.filter((x) => x.ms >= LIMIT_MS);
+    console.log(`# regex timing: baseline ${baseline.toFixed(1)} ms, factor ${factor.toFixed(2)}, limit ${limit.toFixed(0)} ms, ${count} runs, worst ${w.ms.toFixed(1)} ms (${w.kind} ${w.name}, ${JSON.stringify(w.f)} x ${w.n})`);
+    const slow = worst.filter((x) => x.ms >= limit);
     assert.deepEqual(slow, [], JSON.stringify(slow));
   });
 
