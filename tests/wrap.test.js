@@ -450,6 +450,14 @@ for (const [name, shell] of SHELLS) {
   });
 }
 
+test('dash with BASH_VERSION in its environment: the line returns cleanly; the command runs with its own status and output', { skip: !fs.existsSync('/bin/dash') && 'dash not installed' }, () => {
+  const marker = path.join(tmp, 'ran-dash-bv');
+  const r = spawnSync('/bin/dash', ['-c', ccCommand(`touch ${marker}; echo plain out; echo err >&2; exit 3`, block(HOOKS), path.join(tmp, 'cwd-dash-bv'))],
+    { cwd: tmp, env: { ...ENV, BASH_VERSION: '5.2.21(1)-release' }, encoding: 'utf8' });
+  assert.deepEqual([r.status, r.stdout, r.stderr], [3, 'plain out\n', 'err\n']);
+  assert.ok(fs.existsSync(marker));
+});
+
 // A fake shell named for zsh or bash, so that Claude Code's rule accepts it as CLAUDE_CODE_SHELL.
 function fakeShell(name, body) {
   const d = fs.mkdtempSync(path.join(tmp, 'shell-'));
