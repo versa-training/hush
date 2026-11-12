@@ -136,8 +136,9 @@ const SHAPES = [
   { rule: 'httpie-auth', cmd: /(?:^|[\s\u0002(])(?:http|https|xh|xhs)(?=[\s\u0002])/, re: `${BEFORE}(?:-a|--auth)(?:=|${S}{1,16})${V}`, fix: 'http -a "user:$API_PASSWORD" ..., or a ~/.netrc entry', user: true },
 ].map((s) => ({ ...s, re: new RegExp(s.re, 'gd') }));
 
-// Names in NAME=value that hold a setting about a secret, not the secret.
-const NOT_SECRET_NAME = /_(?:FILE|PATH|DIR|URL|URI|HOST|PORT|USER|USERNAME|NAME|TYPE|MODE|PROVIDER|METHOD|ENABLED|HEADER|ENDPOINT|ID|DOMAIN|ISSUER|AUDIENCE|SCOPE|REGION|TTL|TIMEOUT|EXPIRY|LENGTH)$/;
+// Names in NAME=value that hold a setting about a secret, not the secret:
+// a name that contains TOKENS (a token count) or ends in a setting word.
+const NOT_SECRET_NAME = /TOKENS|_(?:FILE|PATH|DIR|URL|URI|HOST|PORT|USER|USERNAME|NAME|TYPE|MODE|PROVIDER|METHOD|ENABLED|HEADER|ENDPOINT|ID|DOMAIN|ISSUER|AUDIENCE|SCOPES?|REGION|TTL|TIMEOUT|EXPIRY|LENGTH|ARN|TEMPLATE|ROTATION|COUNT|LIMIT|PREFIX|ALGORITHM)$/;
 
 const strip = (v) => v.replace(/^["'[(]+/, '').replace(/["',\])};]+$/, '');
 
@@ -152,7 +153,7 @@ function check(s, v, allow, prose = () => false) {
   if (v.includes(EXP)) return null;
   v = strip(v);
   if (/\$[A-Za-z_{(]|`/.test(v)) return null;
-  if (v.length < 6 || v.startsWith('-') || placeholder(v) || filePath(v)) return null;
+  if (v.length < 6 || v.startsWith('-') || /^\d+$/.test(v) || placeholder(v) || filePath(v)) return null;
   if (/^[a-z]+$/.test(v) && prose()) return null;
   const sha = sha8(v);
   if (allow.has(sha)) return null;

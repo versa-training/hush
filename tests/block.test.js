@@ -246,6 +246,24 @@ test('the block message adds the Write tool hint only when the command writes a 
   }
 });
 
+test('not blocked: token counts, all-digit values, and names that end in a setting word; a secret under such a word is still blocked', () => {
+  const pass = ['MAX_THINKING_TOKENS=100000 claude', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS=128000 claude -p x', 'export OPENAI_MAX_TOKENS=200000',
+    'GITHUB_TOKEN_SCOPES=repo,workflow gh auth status', 'SECRET_ARN=arn:aws:secretsmanager:eu-central-1:123456789012:secret:app-db-AbCdEf node x',
+    'PASSWORD_RESET_TEMPLATE=resetPasswordV2 node mail.js', 'JWT_SECRET_ROTATION=monthly node x', 'API_TOKEN_COUNT=fiveThousand node x',
+    'AUTH_REQUEST_LIMIT=perMinute60 node x', 'TOKEN_PREFIX=versa_live_ node x', 'JWT_SECRET_ALGORITHM=RS256withPSS node x', 'API_KEY_HEADER=X-Api-Key node x',
+    'AUTH_TOKEN_TTL=oneHour3600 node x', 'TOKEN_EXPIRY=twoWeeks14 node x', 'SECRET_NAME=prod/app node x', 'TOKEN_FILE=run/secret.txt node x',
+    'AUTH_URL=https://auth.example/x node x', 'API_KEY_ID=keyId2024abc node x', 'TOKENIZERS_PARALLELISM=false node x', 'PASSWORD_MIN_LENGTH=12 node x',
+    'AUTHOR=someone node x', 'SECRET_DIR=secretsDir2 node x', 'AUTH_TYPE=oauthBearer2 node x', 'AUTH_MODE=strictMode1 node x', 'TOKEN_ENABLED=enabled1 node x',
+    'PASSWORD_PATH=pwdPath2 node x', 'redis-cli -a 12345678 ping', 'PGPASSWORD=20240101 psql'];
+  for (const c of pass) { const r = hook(c); assert.equal(r.status, 0, `${c} -> ${r.stderr}`); }
+  for (const make of [(v) => `GITHUB_TOKEN=${v} gh api x`, (v) => `API_SECRET_KEY=${v} node x`, (v) => `DB_PASSWORD=${v} node x`, (v) => `TOKEN_SCOPES_X=1 SLACK_TOKEN=${v} node x`]) {
+    const v = fake();
+    const r = hook(make(v));
+    assert.equal(r.status, 2, make('<v>'));
+    assert.ok(!r.stderr.includes(v));
+  }
+});
+
 test('a command longer than 64 KB is checked on its first 64 KB', () => {
   const v = fake();
   assert.equal(hook(`redis-cli -a ${v} ping # ${'x'.repeat(70000)}`).status, 2);

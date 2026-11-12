@@ -84,7 +84,7 @@ A `PreToolUse` hook, `hooks/block.js`, checks the text of every Bash and Monitor
 | `sshpass` | `sshpass -p <value>` | `sshpass -e` with `SSHPASS`, or `sshpass -f` |
 | `curl-user` | `curl -u user:<value>`, `--user user:<value>` | `curl -u "user:$API_PASSWORD"`, or `--netrc-file` |
 | `authorization` | an `Authorization:` header with a literal token in a `curl` or `wget` command | `-H "Authorization: Bearer $API_TOKEN"`, or `-H @file` |
-| `env-password` | `NAME=<value>` where `NAME` contains `PASSWORD`, `PASSWD`, `TOKEN`, `SECRET`, `API_KEY`, `APIKEY`, or `AUTH` (not `AUTHOR`), and `PGPASSWORD`, `MYSQL_PWD`, `REDISCLI_AUTH`, `SSHPASS`: inline before a command, after `env` or `export`, and in `docker run -e`, `--env`, `--env=`. Not a name ending in a setting word such as `_FILE`, `_PATH`, `_URL`, `_HOST`, `_USER`, `_NAME`, `_PROVIDER`, `_ID` | `PGPASSFILE`, or a variable |
+| `env-password` | `NAME=<value>` where `NAME` contains `PASSWORD`, `PASSWD`, `TOKEN`, `SECRET`, `API_KEY`, `APIKEY`, or `AUTH` (not `AUTHOR`), and `PGPASSWORD`, `MYSQL_PWD`, `REDISCLI_AUTH`, `SSHPASS`: inline before a command, after `env` or `export`, and in `docker run -e`, `--env`, `--env=`. Not a name that contains `TOKENS` (a token count) or ends in a setting word such as `_FILE`, `_PATH`, `_DIR`, `_URL`, `_HOST`, `_USER`, `_NAME`, `_TYPE`, `_MODE`, `_PROVIDER`, `_ID`, `_SCOPES`, `_ARN`, `_TEMPLATE`, `_ROTATION`, `_TTL`, `_EXPIRY`, `_LENGTH`, `_COUNT`, `_LIMIT`, `_ENABLED`, `_HEADER`, `_PREFIX`, `_ALGORITHM` | `PGPASSFILE`, or a variable |
 | `conn-password` | `password=<value>`, `passwd=`, `pwd=` in a connection string, such as `psql "host=db password=<value>"` | a `PGPASSFILE` or `~/.pgpass`, or a variable |
 | `redis-auth` | `redis-cli ... AUTH <value>` and `AUTH <user> <value>` | `AUTH "$REDIS_PASSWORD"`, or `REDISCLI_AUTH` |
 | `httpie-auth` | `http -a user:<value>`, `--auth`, also `https`, `xh`, `xhs` | `http -a "user:$API_PASSWORD"`, or `~/.netrc` |
@@ -95,6 +95,7 @@ The hook reads the command the way the shell does: it removes quotes, treats `$V
 - A substitution anywhere in the value: `-a "$REDIS_PASSWORD"`, `-u "user:$PASS"`, `"$(cat file)"`, also inside an inner quoted command.
 - A placeholder: `<password>`, `{{x}}`, `[hush ...]`, `xxx`, `***`, `...`, the words `changeme`, `password`, `secret`, `example`, `token`, and the like, any value that contains `example`, and an all-caps name with an underscore such as `REDIS_PASSWORD` (a variable written without `$`).
 - A file path such as `/etc/redis/redis.conf` or `scripts/deploy.sh`, so `grep requirepass /etc/redis` passes.
+- A value of digits only, such as `MAX_THINKING_TOKENS=100000` or `-a 12345678`.
 - `psql --password <database>`: for `psql` and the other PostgreSQL tools `--password` takes no value.
 - A value whose sha8 is in `allow` or `allowLiterals`. The default `allowLiterals` holds the fingerprint of the well-known local Postgres and Supabase default password.
 - Prose: an all-lowercase word (letters only) in the value position, inside a quoted message with spaces, given to `echo`, `printf`, `git commit -m`, `git tag -m`, or `gh pr create --title`/`--body`. So `git commit -m "feat: support --password option in cli"` passes, and `git commit -m "fix: redis-cli -a <mixed value>"` is still blocked.
