@@ -244,8 +244,8 @@ test('respond-to-leak skill: every command names the plugin root through ${CLAUD
   assert.equal((body.match(/scripts\//g) || []).length - 1, refs.length, 'every script command uses the quoted root');
 });
 
-const CORPUS = path.join(__dirname, 'fixtures', 'harmless-output.txt');
-const COMMANDS = path.join(__dirname, 'fixtures', 'harmless-commands.txt');
+const CORPUS = path.join(__dirname, '..', 'scripts', 'data', 'harmless-output.txt');
+const COMMANDS = path.join(__dirname, '..', 'scripts', 'data', 'harmless-commands.txt');
 
 test('harmless fixtures: at least 150 corpus lines, no default pattern or strict command matches them', () => {
   const text = fs.readFileSync(CORPUS, 'utf8');

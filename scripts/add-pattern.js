@@ -22,7 +22,7 @@ for (let i = 0; i < argv.length; i++) {
 }
 if (!!opt.regex === !!opt['strict-command'] || (opt.regex && (!opt.name || !opt['test-file']))) fail(USAGE);
 
-const FIXTURES = path.join(__dirname, '..', 'tests', 'fixtures');
+const FIXTURES = path.join(__dirname, 'data');
 const CORPUS = path.join(FIXTURES, 'harmless-output.txt');
 const COMMANDS = path.join(FIXTURES, 'harmless-commands.txt');
 const N = 32000;
