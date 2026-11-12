@@ -273,10 +273,13 @@ test('not blocked: token counts, all-digit values, and names that end in a setti
   }
 });
 
-test('a command longer than 64 KB is checked on its first 64 KB', () => {
+test('a command longer than 64 KB is checked on its first and its last 64 KB, not in the middle', () => {
   const v = fake();
   assert.equal(hook(`redis-cli -a ${v} ping # ${'x'.repeat(70000)}`).status, 2);
-  assert.equal(hook(`echo ${'x'.repeat(70000)}; redis-cli -a ${v} ping`).status, 0);
+  assert.equal(hook(`echo ${'x'.repeat(70000)}; redis-cli -a ${v} ping`).status, 2);
+  const doc = 'line of a large document, 123 words\n'.repeat(Math.ceil(65600 / 36)).slice(0, 65600);
+  assert.equal(hook(`cat > /tmp/doc.txt <<'EOF'\n${doc}EOF\nmysql -uroot -p${v} app -e 'select 1'`).status, 2);
+  assert.equal(hook(`echo ${'x'.repeat(70000)}; redis-cli -a ${v} ping; echo ${'x'.repeat(70000)}`).status, 0);
 });
 
 test('a name with TOKENS in it is checked like any other: token counts pass as digits, a literal blocks', () => {

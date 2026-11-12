@@ -41,16 +41,26 @@ function varied(w) {
   return true;
 }
 
-// The longest command text a strict-command or block regex sees: a longer
-// command is matched on its first MAX_COMMAND characters, so a slow regex in
-// the user config cannot hang a hook on a huge command.
+// The longest command text a strict-command or block regex sees at once: a
+// longer command is matched on its first and its last MAX_COMMAND characters
+// (see slices), so a slow regex in the user config cannot hang a hook on a
+// huge command. The middle of such a command is not checked.
 const MAX_COMMAND = 65536;
+
+// The parts of a command that are checked: the whole command, or its first
+// MAX_COMMAND characters and its last ones, the last part starting after its
+// first newline, so it starts at a line of the command where it can.
+function slices(command) {
+  if (command.length <= MAX_COMMAND) return [command];
+  const tail = command.slice(-MAX_COMMAND);
+  const nl = tail.indexOf('\n');
+  return [command.slice(0, MAX_COMMAND), nl >= 0 ? tail.slice(nl + 1) : tail];
+}
 
 // Returns true when the command text matches one of cfg.strictCommands.
 function isStrict(command, cfg) {
   if (!command) return false;
-  const text = command.slice(0, MAX_COMMAND);
-  return (cfg.strictCommands || []).some((r, i) => regex(cfg, 'strictCommands', i, r, 'm').test(text));
+  return slices(command).some((text) => (cfg.strictCommands || []).some((r, i) => regex(cfg, 'strictCommands', i, r, 'm').test(text)));
 }
 
 // The command inside the string Claude Code passes to `bash -c`
@@ -232,4 +242,4 @@ class Strict {
 
 const notice = (n) => `[hush] strict mask: ${n} value(s) masked; ask for one value by name if you need it`;
 
-module.exports = { Strict, isStrict, commandOf, notice, varied, MAX_COMMAND };
+module.exports = { Strict, isStrict, commandOf, notice, varied, slices, MAX_COMMAND };

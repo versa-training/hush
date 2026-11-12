@@ -207,7 +207,10 @@ test('strictCommands: sed -i without -n edits a .env file in place and is not st
   for (const c of yes) assert.ok(isStrict(c, cfg), `should match: ${c}`);
 });
 
-test('a command longer than 64 KB is matched on its first 64 KB', () => {
+test('a command longer than 64 KB is matched on its first and its last 64 KB, not in the middle', () => {
   assert.ok(isStrict(`env; echo ${'x'.repeat(70000)}`, cfg));
-  assert.ok(!isStrict(`echo ${'x'.repeat(70000)}; env`, cfg));
+  assert.ok(isStrict(`echo ${'x'.repeat(70000)}; env`, cfg));
+  const doc = 'line of a large document, 123 words\n'.repeat(Math.ceil(67584 / 36)).slice(0, 67584);
+  assert.ok(isStrict(`cat > /tmp/doc.txt <<'EOF'\n${doc}EOF\ncat .env`, cfg));
+  assert.ok(!isStrict(`echo ${'x'.repeat(70000)}; env; echo ${'x'.repeat(70000)}`, cfg));
 });

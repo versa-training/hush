@@ -109,7 +109,7 @@ A command that only mentions a shape for documentation, in an `echo` string or a
 [hush] Example code with a sample credential can be written to a file with the Write tool, or with a placeholder such as changeme.
 ```
 
-A command longer than 64 KB is checked on its first 64 KB. Set `"blockLiterals": false` in your config to turn the block off. The hook fails closed: when it cannot load the config, it blocks the command with a message that names the file and the step to recover, never a value, for example `[hush] blocked: the literal password check failed (SyntaxError in ~/.config/hush/config.json). Fix or remove ~/.config/hush/config.json, then run node <plugin>/scripts/check.js.`; the Edit and Write tools are not blocked by it. An unparseable payload passes. Cost: one `node` start per Bash and Monitor call, about 28 ms (median of 20).
+A command longer than 64 KB is checked on its first 64 KB and its last 64 KB, where a literal password usually sits; the middle of such a command, such as the body of a huge heredoc, is not checked. Set `"blockLiterals": false` in your config to turn the block off. The hook fails closed: when it cannot load the config, it blocks the command with a message that names the file and the step to recover, never a value, for example `[hush] blocked: the literal password check failed (SyntaxError in ~/.config/hush/config.json). Fix or remove ~/.config/hush/config.json, then run node <plugin>/scripts/check.js.`; the Edit and Write tools are not blocked by it. An unparseable payload passes. Cost: one `node` start per Bash and Monitor call, about 28 ms (median of 20).
 
 The block cannot take a value back out of the transcript: the model wrote it into its tool call before the hook ran. It stops the command, so the value does not reach the process list, the shell history, or the output, and it teaches the model the variable form for the next command.
 
@@ -136,7 +136,7 @@ Some commands print a whole configuration: every environment variable of a conta
 | `/proc/<pid>/environ` | `cat /proc/1/environ` |
 | `history` | `history \| tail` |
 
-A default looks at most 256 characters past the command name (200 for the `.env` readers), so it runs in linear time. The command is matched on its first 64 KB. Your config's `strictCommands` are appended, for example `["\\bvault\\s+read\\b"]`.
+A default looks at most 256 characters past the command name (200 for the `.env` readers), so it runs in linear time. A command longer than 64 KB is matched on its first and its last 64 KB; its middle is not checked. Your config's `strictCommands` are appended, for example `["\\bvault\\s+read\\b"]`.
 
 The output of a matching command gets these rules on top of the normal detection. A value is:
 
@@ -239,7 +239,7 @@ The defaults are in [`hush.default.json`](hush.default.json). Your file is `$HUS
 | `blockLiterals` | `false` turns the [literal block](#literal-block) off. Default `true`. |
 | `strictCommands` | Regexes on the command text; a match turns on [strict masking](#strict-commands). Appended to the defaults. Must run in linear time (see below). |
 
-Your patterns and strict commands must run in linear time: no nested or adjacent open repeats that can match the same text, such as `(a+)+`, `\w*\w*=`, or `x.*y.*z`, and a bound on each open repeat in the middle of a regex, such as `[^\n]{0,256}` instead of `[^\n]*`. hush sets no time limit per regex: a slow pattern runs on every output and makes every command wait, until the hook times out. A strict command sees at most the first 64 KB of a command, which limits the damage but does not prevent it. The tests time the default regexes only.
+Your patterns and strict commands must run in linear time: no nested or adjacent open repeats that can match the same text, such as `(a+)+`, `\w*\w*=`, or `x.*y.*z`, and a bound on each open repeat in the middle of a regex, such as `[^\n]{0,256}` instead of `[^\n]*`. hush sets no time limit per regex: a slow pattern runs on every output and makes every command wait, until the hook times out. A strict command sees at most 64 KB of a command at once (its first and its last 64 KB), which limits the damage but does not prevent it. The tests time the default regexes only.
 
 How listed files are read:
 
@@ -290,7 +290,7 @@ hush does not catch:
 - Image or binary content that is not text: base64 strings are scanned, pixels are not.
 - Telemetry, which sees the original output.
 - A hook that times out (10 seconds) or cannot start, for example when `node` is not on PATH: fail closed covers only an error the hook throws.
-- A literal password or a strict command after the first 64 KB of a command.
+- A literal password or a strict command in the middle of a command longer than 64 KB: more than 64 KB from both its start and its end, such as inside a huge heredoc.
 
 ### Non-secret values
 

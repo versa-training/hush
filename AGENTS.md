@@ -15,7 +15,7 @@ hush is a Claude Code plugin (Node 22 or newer, no dependencies). A `PostToolUse
 
 - No test or script ever prints a real value. Tests use values from `crypto.randomBytes`.
 - The hook fails closed: on any error it withholds the output, with a message that names the file and how to recover.
-- Regexes on commands or output run in linear time: every open repeat in the middle of a regex has a bound. `tests/regex-time.test.js` times each shipped regex on 32 KB and 1 MB of adversarial input built from its own literal fragments, and the functions that run them at 64 KB: under 250 ms each. Commands are matched on their first 64 KB (`MAX_COMMAND` in `hooks/strict.js`), so a slow user regex cannot hang a hook on a huge command.
+- Regexes on commands or output run in linear time: every open repeat in the middle of a regex has a bound. `tests/regex-time.test.js` times each shipped regex on 32 KB and 1 MB of adversarial input built from its own literal fragments, and the functions that run them at 64 KB: under 250 ms each. Commands are matched on their first and their last 64 KB (`MAX_COMMAND` and `slices()` in `hooks/strict.js`), so a slow user regex cannot hang a hook on a huge command.
 - The respond-to-leak skill names scripts as `node "${CLAUDE_PLUGIN_ROOT}/scripts/<name>.js"`: Claude Code fills in the path when it loads the skill; the Bash tool has no such variable.
 - No em or en dashes, no exclamation marks.
 - Release: bump the version in `package.json`, `.claude-plugin/plugin.json`, and `.claude-plugin/marketplace.json`, and add a `CHANGELOG.md` entry.

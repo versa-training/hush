@@ -20,9 +20,11 @@ function main() {
   const { loadConfig, allowSet } = require('./hush-lib');
   const cfg = loadConfig();
   if (cfg.blockLiterals === false) return 0;
-  // A command longer than MAX_COMMAND is checked on its first MAX_COMMAND characters.
-  const { MAX_COMMAND } = require('./strict');
-  const found = require('./literal').findLiterals(command.slice(0, MAX_COMMAND), cfg, allowSet(cfg));
+  // A command longer than MAX_COMMAND is checked on its first and its last MAX_COMMAND characters.
+  const { slices } = require('./strict');
+  const { findLiterals } = require('./literal');
+  const allow = allowSet(cfg);
+  const found = slices(command).flatMap((part) => findLiterals(part, cfg, allow));
   if (!found.length) return 0;
   const f = found[0];
   const sha = f.length >= cfg.minLength ? ` sha:${f.sha}` : '';
