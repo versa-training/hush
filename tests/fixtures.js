@@ -5,7 +5,8 @@ const crypto = require('crypto');
 
 const hex = (n) => crypto.randomBytes(n).toString('hex');
 const b64 = (n) => crypto.randomBytes(n).toString('base64');
-const b64url = (n) => crypto.randomBytes(n).toString('base64url');
+// Never starts with `-`: a fake value that looks like a flag is not masked as a value.
+const b64url = (n) => crypto.randomBytes(n).toString('base64url').replace(/^-/, 'x');
 
 // `docker inspect` of a Redis container: password in the healthcheck and the command.
 function redisInspect(pw) {
@@ -23,7 +24,8 @@ function redisInspect(pw) {
 
 // A fuller `docker inspect` of an app container. Returns {json, secrets}.
 function appInspect() {
-  const s = { db: b64url(18), api: `sk_live_${b64url(24).replace(/[-_]/g, 'x')}`, redis: hex(16), session: b64(30), label: b64url(24), cmdTok: b64url(20) };
+  // label has a digit: rule (d) masks a long word only with one (the README says so).
+  const s = { db: b64url(18), api: `sk_live_${b64url(24).replace(/[-_]/g, 'x')}`, redis: hex(16), session: b64(30), label: `${b64url(24)}0`, cmdTok: b64url(20) };
   const id = hex(32);
   const obj = [{
     Id: id,

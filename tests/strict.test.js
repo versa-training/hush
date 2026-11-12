@@ -13,7 +13,8 @@ const { Strict, isStrict, commandOf, varied } = require('../hooks/strict');
 const F = require('./fixtures');
 
 const hex = (n) => crypto.randomBytes(n).toString('hex');
-const b64url = (n) => crypto.randomBytes(n).toString('base64url');
+// Never starts with `-`: a fake value that looks like a flag is not masked as a value.
+const b64url = (n) => crypto.randomBytes(n).toString('base64url').replace(/^-/, 'x');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hush-strict-'));
 const cfgFile = path.join(tmp, 'cfg.json');
 fs.writeFileSync(cfgFile, '{}');
