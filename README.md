@@ -84,16 +84,19 @@ A `PreToolUse` hook, `hooks/block.js`, checks the text of every Bash and Monitor
 | `sshpass` | `sshpass -p <value>` | `sshpass -e` with `SSHPASS`, or `sshpass -f` |
 | `curl-user` | `curl -u user:<value>`, `--user user:<value>` | `curl -u "user:$API_PASSWORD"`, or `--netrc-file` |
 | `authorization` | an `Authorization:` header with a literal token in a `curl` or `wget` command | `-H "Authorization: Bearer $API_TOKEN"`, or `-H @file` |
-| `env-password` | `NAME=<value>` where `NAME` contains `PASSWORD`, `PASSWD`, `TOKEN`, `SECRET`, `API_KEY`, `APIKEY`, or `AUTH` (not `AUTHOR`), and `PGPASSWORD`, `MYSQL_PWD`, `REDISCLI_AUTH`, `SSHPASS`: inline before a command, after `env` or `export`, and in `docker run -e`, `--env`, `--env=`. Not a name that ends in a setting word such as `_FILE`, `_PATH`, `_DIR`, `_URL`, `_HOST`, `_USER`, `_NAME`, `_TYPE`, `_MODE`, `_PROVIDER`, `_ID`, `_SCOPES`, `_ARN`, `_TEMPLATE`, `_ROTATION`, `_TTL`, `_EXPIRY`, `_LENGTH`, `_COUNT`, `_LIMIT`, `_ENABLED`, `_HEADER`, `_PREFIX`, `_ALGORITHM` | `PGPASSFILE`, or a variable |
+| `env-password` | `NAME=<value>` where `NAME` contains `PASSWORD`, `PASSWD`, `TOKEN`, `SECRET`, `API_KEY`, `APIKEY`, or `AUTH` (not `AUTHOR`), and `PGPASSWORD`, `MYSQL_PWD`, `REDISCLI_AUTH`, `SSHPASS`: inline before a command, after `env` or `export`, and in `docker run -e`, `--env`, `--env=`. A value that starts with `Bearer ` or `Basic ` is checked by the `bearer` rule. Not a name that ends in a setting word such as `_FILE`, `_PATH`, `_DIR`, `_URL`, `_HOST`, `_USER`, `_NAME`, `_TYPE`, `_MODE`, `_PROVIDER`, `_ID`, `_SCOPES`, `_ARN`, `_TEMPLATE`, `_ROTATION`, `_TTL`, `_EXPIRY`, `_LENGTH`, `_COUNT`, `_LIMIT`, `_ENABLED`, `_HEADER`, `_PREFIX`, `_ALGORITHM`, `_POLICY`, `_STRENGTH`, `_RULES` | `PGPASSFILE`, or a variable |
 | `conn-password` | `password=<value>`, `passwd=`, `pwd=` in a connection string, such as `psql "host=db password=<value>"` | a `PGPASSFILE` or `~/.pgpass`, or a variable |
 | `redis-auth` | `redis-cli ... AUTH <value>` and `AUTH <user> <value>` | `AUTH "$REDIS_PASSWORD"`, or `REDISCLI_AUTH` |
+| `docker-login` | `docker login -p <value>`, also `podman` and `nerdctl` (`--password <value>` is `password-flag`; `--password-stdin` passes) | `docker login --password-stdin` |
+| `htpasswd` | `htpasswd -b <file> <user> <value>`, `-nb <user> <value>`, with any other flags | `htpasswd -i` with the password on stdin |
+| `bearer` | `NAME="Bearer <value>"` or `"Basic <value>"` with any name, and an `Authorization:` value starting with `Bearer ` or `Basic ` outside `curl` and `wget` | `AUTH_HEADER="Bearer $API_TOKEN"` |
 | `httpie-auth` | `http -a user:<value>`, `--auth`, also `https`, `xh`, `xhs` | `http -a "user:$API_PASSWORD"`, or `~/.netrc` |
 | `url-password` | `scheme://user:<value>@host` with any scheme | `${DB_PASSWORD}` in the URL, or a URL read from a file |
 
 The hook reads the command the way the shell does: it removes quotes, treats `$VAR`, `${...}`, `$(...)`, and backticks as substitutions, and also checks the text inside `$(...)`, inside quoted strings (`ssh host "..."`, `bash -c '...'`), heredocs, and comments. A finding needs a value of 6 or more characters. It does not block:
 
 - A substitution anywhere in the value: `-a "$REDIS_PASSWORD"`, `-u "user:$PASS"`, `"$(cat file)"`, also inside an inner quoted command.
-- A placeholder: `<password>`, `{{x}}`, `[hush ...]`, `xxx`, `***`, `...`, the words `changeme`, `password`, `secret`, `example`, `token`, and the like, any value that contains `example`, and an all-caps name with an underscore such as `REDIS_PASSWORD` (a variable written without `$`).
+- A placeholder: `<password>`, `{{x}}`, `[hush ...]`, `xxx`, `***`, `...`, the words `changeme`, `password`, `secret`, `example`, `token`, and the like, any value that contains `example`, a value ending in `xxx`, a vendor prefix followed only by `x`, `*`, `.`, or `-` (`sk_test_xxx`, `sk-****`), and an all-caps name with an underscore such as `REDIS_PASSWORD` (a variable written without `$`).
 - A file path such as `/etc/redis/redis.conf` or `scripts/deploy.sh`, so `grep requirepass /etc/redis` passes.
 - A value of digits only, such as `MAX_THINKING_TOKENS=100000` or `-a 12345678`.
 - `psql --password <database>`: for `psql` and the other PostgreSQL tools `--password` takes no value.

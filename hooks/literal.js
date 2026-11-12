@@ -117,6 +117,12 @@ const BETWEEN = `(?:["']${S}{0,16},${S}{0,16}|${S}{1,16})`;
 const V = '([^\\s\\u0002]*)';
 // The text of the simple command before index i, up to 400 characters back.
 const lastCommand = (text, i) => { const w = text.slice(Math.max(0, i - 400), i); return w.slice(Math.max(...['\n', '|', ';', '&'].map((c) => w.lastIndexOf(c))) + 1); };
+// True when the NAME=value match m holds a Bearer or Basic scheme word followed
+// by whitespace inside the word: the bearer rule checks the value after it.
+const schemeFirst = (text, m) => /^[Bb](?:earer|asic)$/.test(m[2]) && text[m.index + m[0].length] === SP;
+// Placeholders in a sample command: a value ending in xxx, or a vendor prefix
+// followed only by x, *, ., or - (sk_test_xxx, sk-****).
+const samplePlaceholder = (v) => /xxx$/i.test(v) || /^[A-Za-z]{1,12}(?:[_-][A-Za-z0-9]{1,12}){0,2}[_-][xX*.-]{3,}$/.test(v);
 const PG_TOOLS = /\b(?:psql|pg_\w+|createdb|dropdb|createuser|dropuser|pgbench|vacuumdb|reindexdb|clusterdb)\b/;
 
 // rule, regex on the cooked text (group 1 is the value), the fix shown, and an optional check.
@@ -129,16 +135,21 @@ const SHAPES = [
   { rule: 'sshpass', re: `\\bsshpass${S}{1,16}-p${S}{0,16}${V}`, fix: 'SSHPASS="$SSH_PASSWORD" sshpass -e ..., or sshpass -f <file>' },
   { rule: 'curl-user', cmd: /\bcurl\b/, re: `${BEFORE}(?:-u${S}{0,16}|--user(?:=|${S}{1,16}))${V}`, fix: 'curl -u "user:$API_PASSWORD" ..., or curl --netrc-file <file>', user: true },
   { rule: 'authorization', cmd: /\b(?:curl|wget)\b/, re: `[Aa]uthorization:${S}{0,16}(?:(?:[Bb]earer|[Bb]asic|[Tt]oken|[Bb]ot|[Dd]igest)${S}{1,16})?${V}`, fix: 'curl -H "Authorization: Bearer $API_TOKEN" ..., or -H @<header-file>' },
-  { rule: 'env-password', re: `(?<![\\w$])(PGPASSWORD|MYSQL_PWD|REDISCLI_AUTH|SSHPASS|[A-Z0-9_]{0,64}(?:PASSWORD|PASSWD|TOKEN|SECRET|API_KEY|APIKEY|AUTH(?!OR))[A-Z0-9_]{0,64})=${V}`, fix: 'PGPASSFILE=<file> psql ..., or PGPASSWORD="$DB_PASSWORD" psql ...' , group: 2, skip: (text, m) => NOT_SECRET_NAME.test(m[1]) },
+  { rule: 'env-password', re: `(?<![\\w$])(PGPASSWORD|MYSQL_PWD|REDISCLI_AUTH|SSHPASS|[A-Z0-9_]{0,64}(?:PASSWORD|PASSWD|TOKEN|SECRET|API_KEY|APIKEY|AUTH(?!OR))[A-Z0-9_]{0,64})=${V}`, fix: 'PGPASSFILE=<file> psql ..., or PGPASSWORD="$DB_PASSWORD" psql ...' , group: 2, skip: (text, m) => NOT_SECRET_NAME.test(m[1]) || schemeFirst(text, m) },
   { rule: 'url-password', re: `\\b[A-Za-z][A-Za-z0-9+.-]{1,20}://[^\\s\\u0002/@:]{0,256}:([^\\s\\u0002@/]+)@`, fix: '"postgres://user:${DB_PASSWORD}@host/db", or a URL read from a file' },
   { rule: 'conn-password', re: `(?<![\\w$.-])(?:[Pp]ass(?:word|wd)|PASSWORD|PASSWD|[Pp]wd)=${V}`, fix: 'psql "host=db user=app" with the password in PGPASSFILE or ~/.pgpass, or password=$DB_PASSWORD from a variable' },
   { rule: 'redis-auth', cmd: /\bredis-cli\b/, re: `${BEFORE}[Aa][Uu][Tt][Hh]${S}{1,16}([^\\s\\u0002>]+)(?:${S}{1,16}([^\\s\\u0002>]+))?`, pick: (m) => (m[2] !== undefined ? 2 : 1), fix: 'redis-cli AUTH "$REDIS_PASSWORD", or REDISCLI_AUTH read from a file' },
+  { rule: 'docker-login', cmd: /\b(?:docker|podman|nerdctl)[\s\u0002]{1,16}login\b/, re: `${BEFORE}-p(?:=|${S}{1,16})?${V}`, fix: 'printf %s "$REGISTRY_PASSWORD" | docker login -u <user> --password-stdin <registry>' },
+  { rule: 'htpasswd', cmd: /\bhtpasswd\b/, re: `${BEFORE}-([A-Za-z]{0,8}b[A-Za-z]{0,8})((?:${S}{1,16}-[A-Za-z]{1,8}){0,8})${S}{1,16}([^\\s\\u0002]+)${S}{1,16}([^\\s\\u0002]+)(?:${S}{1,16}([^\\s\\u0002]+))?`,
+    pick: (m) => (/n/.test(m[1] + m[2]) || /(?:^|[\s\u0002])-[A-Za-z]{0,8}n/.test(m.input.slice(0, m.index)) ? 4 : 5), fix: 'htpasswd -i <file> <user> < <password-file>' },
+  { rule: 'bearer', re: `(?:(?<![\\w$])[A-Za-z_][A-Za-z0-9_]{0,64}=|([Aa]uthorization)["']?${S}{0,16}:${S}{0,16})["']?(?:[Bb]earer|[Bb]asic)${S}{1,16}${V}`, group: 2,
+    skip: (text, m) => m[1] !== undefined && /\b(?:curl|wget)\b/.test(lastCommand(text, m.index)), fix: 'AUTH_HEADER="Bearer $API_TOKEN"' },
   { rule: 'httpie-auth', cmd: /(?:^|[\s\u0002(])(?:http|https|xh|xhs)(?=[\s\u0002])/, re: `${BEFORE}(?:-a|--auth)(?:=|${S}{1,16})${V}`, fix: 'http -a "user:$API_PASSWORD" ..., or a ~/.netrc entry', user: true },
 ].map((s) => ({ ...s, re: new RegExp(s.re, 'gd') }));
 
 // Names in NAME=value that hold a setting about a secret, not the secret:
 // a name that ends in a setting word. A token count passes as an all-digit value.
-const NOT_SECRET_NAME = /_(?:FILE|PATH|DIR|URL|URI|HOST|PORT|USER|USERNAME|NAME|TYPE|MODE|PROVIDER|METHOD|ENABLED|HEADER|ENDPOINT|ID|DOMAIN|ISSUER|AUDIENCE|SCOPES?|REGION|TTL|TIMEOUT|EXPIRY|LENGTH|ARN|TEMPLATE|ROTATION|COUNT|LIMIT|PREFIX|ALGORITHM)$/;
+const NOT_SECRET_NAME = /_(?:FILE|PATH|DIR|URL|URI|HOST|PORT|USER|USERNAME|NAME|TYPE|MODE|PROVIDER|METHOD|ENABLED|HEADER|ENDPOINT|ID|DOMAIN|ISSUER|AUDIENCE|SCOPES?|REGION|TTL|TIMEOUT|EXPIRY|LENGTH|ARN|TEMPLATE|ROTATION|COUNT|LIMIT|PREFIX|ALGORITHM|POLICY|STRENGTH|RULES)$/;
 
 const strip = (v) => v.replace(/^["'[(]+/, '').replace(/["',\])};]+$/, '');
 
@@ -153,7 +164,7 @@ function check(s, v, allow, prose = () => false) {
   if (v.includes(EXP)) return null;
   v = strip(v);
   if (/\$[A-Za-z_{(]|`/.test(v)) return null;
-  if (v.length < 6 || v.startsWith('-') || /^\d+$/.test(v) || placeholder(v) || filePath(v)) return null;
+  if (v.length < 6 || v.startsWith('-') || /^\d+$/.test(v) || placeholder(v) || samplePlaceholder(v) || filePath(v)) return null;
   if (/^[a-z]+$/.test(v) && prose()) return null;
   const sha = sha8(v);
   if (allow.has(sha)) return null;

@@ -50,6 +50,15 @@ const BLOCKED = [
   ['url-password', (v) => `psql "postgres://app:${v}@db.internal:5432/app"`],
   ['url-password', (v) => `git clone https://deploy:${v}@git.internal/repo.git`],
   ['url-password', (v) => `redis-cli -u redis://default:${v}@cache:6379 ping`],
+  ['docker-login', (v) => `docker login -u me -p ${v} registry.internal`],
+  ['docker-login', (v) => `podman login -u me -p'${v}' registry.internal`],
+  ['password-flag', (v) => `docker login -u me --password ${v} registry.internal`],
+  ['htpasswd', (v) => `htpasswd -b users admin ${v}`],
+  ['htpasswd', (v) => `htpasswd -c -B -b /etc/nginx/users admin '${v}'`],
+  ['htpasswd', (v) => `htpasswd -nb admin ${v}`],
+  ['bearer', (v) => `AUTH_HEADER="Bearer ${v}" node x`],
+  ['bearer', (v) => `export GH_HEADER='Basic ${v}'`],
+  ['bearer', (v) => `python3 -c "import requests; requests.get(u, headers={'Authorization': 'Bearer ${v}'})"`],
 ];
 
 test('each shape is blocked with exit 2; the message names the rule and never the value', () => {
@@ -273,6 +282,20 @@ test('a command longer than 64 KB is checked on its first 64 KB', () => {
 test('a name with TOKENS in it is checked like any other: token counts pass as digits, a literal blocks', () => {
   for (const c of ['MAX_THINKING_TOKENS=100000 claude', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS=128000 claude -p x', 'export OPENAI_MAX_TOKENS=200000']) { const r = hook(c); assert.equal(r.status, 0, `${c} -> ${r.stderr}`); }
   for (const make of [(v) => `VALID_API_TOKENS=${v},${fake()} node x`, (v) => `MAX_TOKENS_SECRET=${v} node x`]) {
+    const v = fake();
+    const r = hook(make(v));
+    assert.equal(r.status, 2, make('<v>'));
+    assert.ok(!r.stderr.includes(v));
+  }
+});
+
+test('settings words, sample placeholders, --password-stdin, and variables pass; a Bearer value under any name blocks', () => {
+  const pass = ['PASSWORD_POLICY=strong node x', 'PASSWORD_MIN_LENGTH=12 node x', 'PASSWORD_STRENGTH=strongest node x', 'SECRET_RULES=rotateMonthly1 node x', 'TOKEN_POLICY=shortLived node x',
+    'STRIPE_SECRET_KEY=sk_test_xxx node x', 'STRIPE_SECRET_KEY=sk_live_**** node x', 'OPENAI_API_KEY=sk-.... node x', 'GITHUB_TOKEN=ghp_XXXXXXXX gh api x', 'API_KEY=abc123xxx node x',
+    'echo "$P" | docker login -u me --password-stdin registry.internal', 'docker login -u me -p "$REGISTRY_PASSWORD" registry.internal', 'docker run -p 8080:80 nginx',
+    'htpasswd -c users admin', 'htpasswd -b users admin "$PW"', 'AUTH_HEADER="Bearer $API_TOKEN" node x', 'API_KEY_HEADER=X-Api-Key node x'];
+  for (const c of pass) { const r = hook(c); assert.equal(r.status, 0, `${c} -> ${r.stderr}`); }
+  for (const make of [(v) => `API_TOKEN="Bearer ${v}" node x`]) {
     const v = fake();
     const r = hook(make(v));
     assert.equal(r.status, 2, make('<v>'));
