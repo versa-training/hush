@@ -244,7 +244,11 @@ function literalPrefix(src) {
 let testLine = null;
 if (opt['test-file']) {
   try { testLine = fs.readFileSync(opt['test-file'], 'utf8').replace(/\r?\n$/, ''); } catch { fail('cannot read the test file'); }
-  if (!testLine || /[\r\n]/.test(testLine)) fail('the test file must hold exactly one non-empty line');
+  if (!testLine) fail('the test file must hold exactly one non-empty line');
+  if (/[\r\n]/.test(testLine)) {
+    fail('the test file holds more than one line, but patterns are matched per line, so it must hold exactly one. For a value in a block, such as a key body below a marker line, '
+      + 'write the marker and a fake body on one line and capture the body after the marker, as in `-----BEGIN ACME KEY-----\\s*([A-Za-z0-9+/=]{40,4000})`');
+  }
 }
 
 const expandHome = (p) => (p === '~' || p.startsWith('~/') ? os.homedir() + p.slice(1) : p);

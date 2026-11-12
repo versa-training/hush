@@ -490,3 +490,23 @@ test('respond-to-leak skill: the self-test command passes the literal block', ()
   process.env.HUSH_CONFIG = env.HUSH_CONFIG;
   assert.ok(redact(out, loadConfig(), []).text.includes('[hush'));
 });
+
+test('add-pattern: a multi-line test file is refused with how to capture a block body after its marker; that form is accepted', () => {
+  const d = dir();
+  const cfg = path.join(d, 'config.json');
+  fs.writeFileSync(cfg, '{}');
+  const env = { HUSH_CONFIG: cfg };
+  const body = crypto.randomBytes(48).toString('base64');
+  const line = path.join(d, 'block.txt');
+  fs.writeFileSync(line, `-----BEGIN ACME SIGNING KEY-----\n${body}\n-----END ACME SIGNING KEY-----\n`);
+  const regex = '-----BEGIN ACME SIGNING KEY-----\\s*([A-Za-z0-9+/=]{40,4000})';
+  const multi = run('add-pattern.js', ['--name', 'acme-key', '--regex', regex, '--test-file', line], { env });
+  assert.strictEqual(multi.code, 1, multi.out);
+  assert.match(multi.out, /patterns are matched per line/);
+  assert.match(multi.out, /capture the body after the marker/);
+  assert.ok(!multi.out.includes(body), 'value printed');
+  fs.writeFileSync(line, `-----BEGIN ACME SIGNING KEY----- ${body}\n`);
+  const one = run('add-pattern.js', ['--name', 'acme-key', '--regex', regex, '--test-file', line], { env });
+  assert.strictEqual(one.code, 0, one.out);
+  assert.ok(!one.out.includes(body), 'value printed');
+});
