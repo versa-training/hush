@@ -1,6 +1,6 @@
 {
   "name": "hush",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Redact secrets from tool output before the model sees it.",
   "author": { "name": "versa.training", "url": "https://versa.training" },
   "homepage": "https://github.com/versa-training/hush",
