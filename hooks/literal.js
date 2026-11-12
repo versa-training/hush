@@ -137,8 +137,8 @@ const SHAPES = [
 ].map((s) => ({ ...s, re: new RegExp(s.re, 'gd') }));
 
 // Names in NAME=value that hold a setting about a secret, not the secret:
-// a name that contains TOKENS (a token count) or ends in a setting word.
-const NOT_SECRET_NAME = /TOKENS|_(?:FILE|PATH|DIR|URL|URI|HOST|PORT|USER|USERNAME|NAME|TYPE|MODE|PROVIDER|METHOD|ENABLED|HEADER|ENDPOINT|ID|DOMAIN|ISSUER|AUDIENCE|SCOPES?|REGION|TTL|TIMEOUT|EXPIRY|LENGTH|ARN|TEMPLATE|ROTATION|COUNT|LIMIT|PREFIX|ALGORITHM)$/;
+// a name that ends in a setting word. A token count passes as an all-digit value.
+const NOT_SECRET_NAME = /_(?:FILE|PATH|DIR|URL|URI|HOST|PORT|USER|USERNAME|NAME|TYPE|MODE|PROVIDER|METHOD|ENABLED|HEADER|ENDPOINT|ID|DOMAIN|ISSUER|AUDIENCE|SCOPES?|REGION|TTL|TIMEOUT|EXPIRY|LENGTH|ARN|TEMPLATE|ROTATION|COUNT|LIMIT|PREFIX|ALGORITHM)$/;
 
 const strip = (v) => v.replace(/^["'[(]+/, '').replace(/["',\])};]+$/, '');
 

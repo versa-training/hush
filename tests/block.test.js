@@ -269,3 +269,13 @@ test('a command longer than 64 KB is checked on its first 64 KB', () => {
   assert.equal(hook(`redis-cli -a ${v} ping # ${'x'.repeat(70000)}`).status, 2);
   assert.equal(hook(`echo ${'x'.repeat(70000)}; redis-cli -a ${v} ping`).status, 0);
 });
+
+test('a name with TOKENS in it is checked like any other: token counts pass as digits, a literal blocks', () => {
+  for (const c of ['MAX_THINKING_TOKENS=100000 claude', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS=128000 claude -p x', 'export OPENAI_MAX_TOKENS=200000']) { const r = hook(c); assert.equal(r.status, 0, `${c} -> ${r.stderr}`); }
+  for (const make of [(v) => `VALID_API_TOKENS=${v},${fake()} node x`, (v) => `MAX_TOKENS_SECRET=${v} node x`]) {
+    const v = fake();
+    const r = hook(make(v));
+    assert.equal(r.status, 2, make('<v>'));
+    assert.ok(!r.stderr.includes(v));
+  }
+});
