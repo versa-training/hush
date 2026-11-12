@@ -13,14 +13,23 @@ const MARK = ' # hush output filter';
 const quote = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
 const arg = (s) => (/^[\w./~-]+$/.test(s) ? s : quote(s));
 
+// Where Claude Code keeps the env file of a session, for the messages below.
+// A resumed session keeps its env file, and with it a hush line that no
+// SessionStart of hush replaces once hush is gone.
+const ENV_FILE = '~/.claude/session-env/<session-id>/sessionstart-hook-<n>.sh';
+const STALE = `start a new session (a resumed session keeps this line), or delete the line ending in "${MARK.trim()}" from the session's env file, ${ENV_FILE}`;
+
 // The line this hook appends, one line so that bash messages and $LINENO
 // shift as little as possible. The guard skips the setup when the shell has
 // already run it, so a second copy of the line (another SessionStart, another
-// copy of hush) does not stack a second filter.
+// copy of hush) does not stack a second filter. When wrap.sh is gone (hush was
+// removed or moved), the command runs unfiltered with a notice; when wrap.sh
+// is there but cannot start the filter, the command does not run (exit 125).
 function block(root = __dirname) {
   const wrap = path.join(root, 'wrap.sh');
-  const msg = `[hush] output withheld: wrapper unavailable: ${wrap} did not start the output filter. If hush was updated, moved, or removed, restart the claude process. Else check that node 22 or newer is on PATH and run node ${arg(path.join(path.dirname(root), 'scripts', 'check.js'))}`;
-  return `[ "\${__hush_on-}" = "$$" ] || . ${quote(wrap)} || { printf '%s\\n' ${quote(msg)}; exit 125; }${MARK}\n`;
+  const gone = `[hush] output filter off: ${wrap} is gone (hush was removed or moved), so this command runs unfiltered. To stop this notice, ${STALE}.`;
+  const msg = `[hush] output withheld: wrapper unavailable: ${wrap} did not start the output filter. Check that node 22 or newer is on PATH and run node ${arg(path.join(path.dirname(root), 'scripts', 'check.js'))}. If hush was moved, ${STALE}.`;
+  return `if [ "\${__hush_on-}" != "$$" ]; then if [ -f ${quote(wrap)} ]; then . ${quote(wrap)} || { printf '%s\\n' ${quote(msg)}; exit 125; }; else printf '%s\\n' ${quote(gone)} >&2; fi; fi${MARK}\n`;
 }
 
 // Appends the block to file unless the file already holds it. Keeps every line

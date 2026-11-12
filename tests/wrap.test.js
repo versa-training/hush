@@ -52,7 +52,9 @@ function sh(command, opts = {}) {
   return { status: p.status, signal: p.signal, out: fs.readFileSync(r.out), cwd: fs.existsSync(cwdFile) ? fs.readFileSync(cwdFile, 'utf8').trim() : null };
 }
 const text = (r) => r.out.toString('utf8');
-const unavailable = (hooks) => `[hush] output withheld: wrapper unavailable: ${hooks}/wrap.sh did not start the output filter. If hush was updated, moved, or removed, restart the claude process. Else check that node 22 or newer is on PATH and run node ${path.dirname(hooks)}/scripts/check.js`;
+const STALE = 'start a new session (a resumed session keeps this line), or delete the line ending in "# hush output filter" from the session\'s env file, ~/.claude/session-env/<session-id>/sessionstart-hook-<n>.sh';
+const unavailable = (hooks) => `[hush] output withheld: wrapper unavailable: ${hooks}/wrap.sh did not start the output filter. Check that node 22 or newer is on PATH and run node ${path.dirname(hooks)}/scripts/check.js. If hush was moved, ${STALE}.`;
+const gone = (hooks) => `[hush] output filter off: ${hooks}/wrap.sh is gone (hush was removed or moved), so this command runs unfiltered. To stop this notice, ${STALE}.`;
 
 // Same exit status, same cwd, same bytes with and without the filter, except
 // line numbers: any env script in front of the command shifts them (tested below).
@@ -425,13 +427,24 @@ test('fail closed: filter.js missing or crashing', () => {
   assert.equal(text(q), `[hush] output withheld: filter failed. Run node ${path.dirname(dir)}/scripts/check.js to find the cause.\n`);
 });
 
-test('fail closed: wrap.sh missing (plugin directory moved or removed): the message names the path and says to restart claude', () => {
+test('wrap.sh gone (hush removed or moved, the line left in a resumed session): the command runs unfiltered with its own status, after one notice', () => {
   const marker = path.join(tmp, 'ran-nowrap');
-  const gone = path.join(tmp, 'no-such-dir', 'hooks');
-  const p = sh(`touch ${marker}`, { envScript: block(gone) });
-  assert.equal(p.status, 125);
-  assert.ok(text(p).endsWith(`${unavailable(gone)}\n`));
-  assert.match(text(p), /no-such-dir\/hooks\/wrap\.sh did not start the output filter\. If hush was updated, moved, or removed, restart the claude process\./);
+  const dir = path.join(tmp, 'no-such-dir', 'hooks');
+  const p = sh(`touch ${marker}; echo out; exit 3`, { envScript: block(dir) });
+  assert.equal(p.status, 3);
+  assert.equal(text(p), `${gone(dir)}\nout\n`);
+  assert.ok(fs.existsSync(marker));
+  // Two copies of the line: one notice each, and still no filter.
+  const q = sh('echo two', { envScript: block(dir) + block(dir) });
+  assert.deepEqual([q.status, text(q)], [0, `${gone(dir)}\n${gone(dir)}\ntwo\n`]);
+});
+
+test('wrap.sh present but broken: fail closed, the command does not run, status 125', () => {
+  const dir = fs.mkdtempSync(path.join(tmp, 'brokenwrap-'));
+  fs.writeFileSync(path.join(dir, 'wrap.sh'), 'return 1\n');
+  const marker = path.join(tmp, 'ran-brokenwrap');
+  const p = sh(`touch ${marker}; echo hi`, { envScript: block(dir) });
+  assert.deepEqual([p.status, text(p)], [125, `${unavailable(dir)}\n`]);
   assert.ok(!fs.existsSync(marker));
 });
 
