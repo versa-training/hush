@@ -105,7 +105,7 @@ A command that only mentions a shape for documentation, in an `echo` string or a
 [hush] Example code with a sample credential can be written to a file with the Write tool, or with a placeholder such as changeme.
 ```
 
-Set `"blockLiterals": false` in your config to turn the block off. The hook fails closed: when it cannot load the config, it blocks the command with a message that names the file and the step to recover, never a value, for example `[hush] blocked: the literal password check failed (SyntaxError in ~/.config/hush/config.json). Fix or remove ~/.config/hush/config.json, then run node <plugin>/scripts/check.js.`; the Edit and Write tools are not blocked by it. An unparseable payload passes. Cost: one `node` start per Bash and Monitor call, about 28 ms (median of 20).
+A command longer than 64 KB is checked on its first 64 KB. Set `"blockLiterals": false` in your config to turn the block off. The hook fails closed: when it cannot load the config, it blocks the command with a message that names the file and the step to recover, never a value, for example `[hush] blocked: the literal password check failed (SyntaxError in ~/.config/hush/config.json). Fix or remove ~/.config/hush/config.json, then run node <plugin>/scripts/check.js.`; the Edit and Write tools are not blocked by it. An unparseable payload passes. Cost: one `node` start per Bash and Monitor call, about 28 ms (median of 20).
 
 The block cannot take a value back out of the transcript: the model wrote it into its tool call before the hook ran. It stops the command, so the value does not reach the process list, the shell history, or the output, and it teaches the model the variable form for the next command.
 
@@ -127,11 +127,11 @@ Some commands print a whole configuration: every environment variable of a conta
 | `kubectl get` or `describe` of `secret` or `secrets` | `kubectl get secret db -o yaml` |
 | `systemctl show` with `Environment`, `systemctl show-environment` | `systemctl show app -p Environment` |
 | `cat`, `less`, `more`, `head`, `tail`, `bat`, `grep`, `rg`, `sed`, `awk` of a file named `.env*`, except `.env.example`, `.env.sample`, and `.env.template` | `cat next/.env.local`, `grep TOKEN .env` |
-| `ps` with a BSD-style option word that holds `e` | `ps auxe`, `ps eww 1` |
+| `ps` with a BSD-style option word that holds `e`, among its first four arguments | `ps auxe`, `ps eww 1` |
 | `/proc/<pid>/environ` | `cat /proc/1/environ` |
 | `history` | `history \| tail` |
 
-Your config's `strictCommands` are appended, for example `["\\bvault\\s+read\\b"]`.
+A default looks at most 256 characters past the command name (200 for the `.env` readers), so it runs in linear time. The command is matched on its first 64 KB. Your config's `strictCommands` are appended, for example `["\\bvault\\s+read\\b"]`.
 
 The output of a matching command gets these rules on top of the normal detection. A value is:
 
@@ -223,12 +223,14 @@ The defaults are in [`hush.default.json`](hush.default.json). Your file is `$HUS
 | Key | Meaning |
 |---|---|
 | `files` | Files to read known values from. `~` and `*` within one path segment work. A missing file, a directory, and a broken symlink are skipped. Any other read error, such as a file hush may not read, fails closed with a message that names the file. |
-| `patterns` | JavaScript regex source, run with flag `g`. With capture groups, only the first group is replaced. `"skipPlaceholders": true` keeps a value that is a placeholder or a file path. |
+| `patterns` | JavaScript regex source, run with flag `g`. With capture groups, only the first group is replaced. `"skipPlaceholders": true` keeps a value that is a placeholder or a file path. Must run in linear time (see below). |
 | `allow` | sha8 fingerprints of public values to keep. |
 | `minLength` | Shortest known value to redact. |
 | `allowLiterals` | sha8 fingerprints of public literal values, such as a local database default: neither redacted nor blocked. Appended to the defaults. |
 | `blockLiterals` | `false` turns the [literal block](#literal-block) off. Default `true`. |
-| `strictCommands` | Regexes on the command text; a match turns on [strict masking](#strict-commands). Appended to the defaults. |
+| `strictCommands` | Regexes on the command text; a match turns on [strict masking](#strict-commands). Appended to the defaults. Must run in linear time (see below). |
+
+Your patterns and strict commands must run in linear time: no nested or adjacent open repeats that can match the same text, such as `(a+)+`, `\w*\w*=`, or `x.*y.*z`, and a bound on each open repeat in the middle of a regex, such as `[^\n]{0,256}` instead of `[^\n]*`. hush sets no time limit per regex: a slow pattern runs on every output and makes every command wait, until the hook times out. A strict command sees at most the first 64 KB of a command, which limits the damage but does not prevent it. The tests time the default regexes only.
 
 How listed files are read:
 
@@ -275,6 +277,7 @@ hush does not catch:
 - Image or binary content that is not text: base64 strings are scanned, pixels are not.
 - Telemetry, which sees the original output.
 - A hook that times out (10 seconds) or cannot start, for example when `node` is not on PATH: fail closed covers only an error the hook throws.
+- A literal password or a strict command after the first 64 KB of a command.
 
 ### Non-secret values
 

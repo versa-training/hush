@@ -113,7 +113,7 @@ function cook(src, subs = []) {
 const S = '[\\s\\u0002]';
 const BEFORE = '[\\s\\u0002"\',\\[]';
 // A flag and its value: whitespace, or `", "` between two quoted list items.
-const BETWEEN = `(?:["']${S}*,${S}*|${S}+)`;
+const BETWEEN = `(?:["']${S}{0,16},${S}{0,16}|${S}{1,16})`;
 const V = '([^\\s\\u0002]*)';
 // The text of the simple command before index i, up to 400 characters back.
 const lastCommand = (text, i) => { const w = text.slice(Math.max(0, i - 400), i); return w.slice(Math.max(...['\n', '|', ';', '&'].map((c) => w.lastIndexOf(c))) + 1); };
@@ -126,14 +126,14 @@ const SHAPES = [
   { rule: 'password-flag', re: `(?<![\\w-])--(?:http-|ftp-|proxy-)?pass(?:word)?(=|${BETWEEN})${V}`, fix: '--password="$DB_PASSWORD", or the tool\'s password file option', group: 2,
     skip: (text, m) => m[1] !== '=' && PG_TOOLS.test(lastCommand(text, m.index)) },
   { rule: 'mysql-p', cmd: /\b(?:mysql|mariadb|mysqldump|mysqladmin|mysqlimport|mysqlshow|mysqlcheck|mariadb-dump|mariadb-admin)\b/, re: `${BEFORE}-p([^\\s\\u0002]+)`, fix: 'MYSQL_PWD="$DB_PASSWORD" mysql ..., or --defaults-extra-file=<file>' },
-  { rule: 'sshpass', re: `\\bsshpass${S}+-p${S}*${V}`, fix: 'SSHPASS="$SSH_PASSWORD" sshpass -e ..., or sshpass -f <file>' },
-  { rule: 'curl-user', cmd: /\bcurl\b/, re: `${BEFORE}(?:-u${S}*|--user(?:=|${S}+))${V}`, fix: 'curl -u "user:$API_PASSWORD" ..., or curl --netrc-file <file>', user: true },
-  { rule: 'authorization', cmd: /\b(?:curl|wget)\b/, re: `[Aa]uthorization:${S}*(?:(?:[Bb]earer|[Bb]asic|[Tt]oken|[Bb]ot|[Dd]igest)${S}+)?${V}`, fix: 'curl -H "Authorization: Bearer $API_TOKEN" ..., or -H @<header-file>' },
-  { rule: 'env-password', re: `(?<![\\w$])(PGPASSWORD|MYSQL_PWD|REDISCLI_AUTH|SSHPASS|[A-Z0-9_]*(?:PASSWORD|PASSWD|TOKEN|SECRET|API_KEY|APIKEY|AUTH(?!OR))[A-Z0-9_]*)=${V}`, fix: 'PGPASSFILE=<file> psql ..., or PGPASSWORD="$DB_PASSWORD" psql ...' , group: 2, skip: (text, m) => NOT_SECRET_NAME.test(m[1]) },
-  { rule: 'url-password', re: `\\b[A-Za-z][A-Za-z0-9+.-]{1,20}://[^\\s\\u0002/@:]*:([^\\s\\u0002@/]+)@`, fix: '"postgres://user:${DB_PASSWORD}@host/db", or a URL read from a file' },
+  { rule: 'sshpass', re: `\\bsshpass${S}{1,16}-p${S}{0,16}${V}`, fix: 'SSHPASS="$SSH_PASSWORD" sshpass -e ..., or sshpass -f <file>' },
+  { rule: 'curl-user', cmd: /\bcurl\b/, re: `${BEFORE}(?:-u${S}{0,16}|--user(?:=|${S}{1,16}))${V}`, fix: 'curl -u "user:$API_PASSWORD" ..., or curl --netrc-file <file>', user: true },
+  { rule: 'authorization', cmd: /\b(?:curl|wget)\b/, re: `[Aa]uthorization:${S}{0,16}(?:(?:[Bb]earer|[Bb]asic|[Tt]oken|[Bb]ot|[Dd]igest)${S}{1,16})?${V}`, fix: 'curl -H "Authorization: Bearer $API_TOKEN" ..., or -H @<header-file>' },
+  { rule: 'env-password', re: `(?<![\\w$])(PGPASSWORD|MYSQL_PWD|REDISCLI_AUTH|SSHPASS|[A-Z0-9_]{0,64}(?:PASSWORD|PASSWD|TOKEN|SECRET|API_KEY|APIKEY|AUTH(?!OR))[A-Z0-9_]{0,64})=${V}`, fix: 'PGPASSFILE=<file> psql ..., or PGPASSWORD="$DB_PASSWORD" psql ...' , group: 2, skip: (text, m) => NOT_SECRET_NAME.test(m[1]) },
+  { rule: 'url-password', re: `\\b[A-Za-z][A-Za-z0-9+.-]{1,20}://[^\\s\\u0002/@:]{0,256}:([^\\s\\u0002@/]+)@`, fix: '"postgres://user:${DB_PASSWORD}@host/db", or a URL read from a file' },
   { rule: 'conn-password', re: `(?<![\\w$.-])(?:[Pp]ass(?:word|wd)|PASSWORD|PASSWD|[Pp]wd)=${V}`, fix: 'psql "host=db user=app" with the password in PGPASSFILE or ~/.pgpass, or password=$DB_PASSWORD from a variable' },
-  { rule: 'redis-auth', cmd: /\bredis-cli\b/, re: `${BEFORE}[Aa][Uu][Tt][Hh]${S}+([^\\s\\u0002>]+)(?:${S}+([^\\s\\u0002>]+))?`, pick: (m) => (m[2] !== undefined ? 2 : 1), fix: 'redis-cli AUTH "$REDIS_PASSWORD", or REDISCLI_AUTH read from a file' },
-  { rule: 'httpie-auth', cmd: /(?:^|[\s\u0002(])(?:http|https|xh|xhs)(?=[\s\u0002])/, re: `${BEFORE}(?:-a|--auth)(?:=|${S}+)${V}`, fix: 'http -a "user:$API_PASSWORD" ..., or a ~/.netrc entry', user: true },
+  { rule: 'redis-auth', cmd: /\bredis-cli\b/, re: `${BEFORE}[Aa][Uu][Tt][Hh]${S}{1,16}([^\\s\\u0002>]+)(?:${S}{1,16}([^\\s\\u0002>]+))?`, pick: (m) => (m[2] !== undefined ? 2 : 1), fix: 'redis-cli AUTH "$REDIS_PASSWORD", or REDISCLI_AUTH read from a file' },
+  { rule: 'httpie-auth', cmd: /(?:^|[\s\u0002(])(?:http|https|xh|xhs)(?=[\s\u0002])/, re: `${BEFORE}(?:-a|--auth)(?:=|${S}{1,16})${V}`, fix: 'http -a "user:$API_PASSWORD" ..., or a ~/.netrc entry', user: true },
 ].map((s) => ({ ...s, re: new RegExp(s.re, 'gd') }));
 
 // Names in NAME=value that hold a setting about a secret, not the secret.
@@ -233,4 +233,7 @@ function findLiterals(command, cfg, allow) {
   return found;
 }
 
-module.exports = { cook, findLiterals, placeholder, EXP, SP };
+// Every regex above that runs on command text, for the timing test.
+const REGEXES = [...SHAPES.map((s) => s.re), ...SHAPES.filter((s) => s.cmd).map((s) => s.cmd), NOT_SECRET_NAME, PG_TOOLS];
+
+module.exports = { cook, findLiterals, placeholder, EXP, SP, REGEXES };

@@ -245,3 +245,9 @@ test('the block message adds the Write tool hint only when the command writes a 
     assert.ok(!/Write tool/.test(r.stderr), c.replace(v, '<v>'));
   }
 });
+
+test('a command longer than 64 KB is checked on its first 64 KB', () => {
+  const v = fake();
+  assert.equal(hook(`redis-cli -a ${v} ping # ${'x'.repeat(70000)}`).status, 2);
+  assert.equal(hook(`echo ${'x'.repeat(70000)}; redis-cli -a ${v} ping`).status, 0);
+});

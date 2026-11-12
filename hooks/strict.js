@@ -41,10 +41,16 @@ function varied(w) {
   return true;
 }
 
+// The longest command text a strict-command or block regex sees: a longer
+// command is matched on its first MAX_COMMAND characters, so a slow regex in
+// the user config cannot hang a hook on a huge command.
+const MAX_COMMAND = 65536;
+
 // Returns true when the command text matches one of cfg.strictCommands.
 function isStrict(command, cfg) {
   if (!command) return false;
-  return (cfg.strictCommands || []).some((r, i) => regex(cfg, 'strictCommands', i, r, 'm').test(command));
+  const text = command.slice(0, MAX_COMMAND);
+  return (cfg.strictCommands || []).some((r, i) => regex(cfg, 'strictCommands', i, r, 'm').test(text));
 }
 
 // The command inside the string Claude Code passes to `bash -c`
@@ -226,4 +232,4 @@ class Strict {
 
 const notice = (n) => `[hush] strict mask: ${n} value(s) masked; ask for one value by name if you need it`;
 
-module.exports = { Strict, isStrict, commandOf, notice, varied };
+module.exports = { Strict, isStrict, commandOf, notice, varied, MAX_COMMAND };

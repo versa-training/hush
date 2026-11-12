@@ -197,3 +197,8 @@ test('strictCommands: every default regex runs in under 1 s on 32,000-character 
   console.log(`# worst strict command time: ${worst.ms.toFixed(0)} ms (${JSON.stringify(worst.f)})`);
   assert.ok(worst.ms < 1000, JSON.stringify(worst));
 });
+
+test('a command longer than 64 KB is matched on its first 64 KB', () => {
+  assert.ok(isStrict(`env; echo ${'x'.repeat(70000)}`, cfg));
+  assert.ok(!isStrict(`echo ${'x'.repeat(70000)}; env`, cfg));
+});
