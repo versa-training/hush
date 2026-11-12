@@ -156,3 +156,12 @@ test('url-password-any, requirepass, and pass-flag keep placeholders, documented
     assert.ok(!r.text.includes(v) && r.counts[name] === 1, name);
   }
 });
+
+test('url-password keeps placeholders, as url-password-any does', () => {
+  const P = ['pass', 'word'].join('');
+  const keep = [`redis://user:${P}@localhost:6379`, 'postgres://app:<password>@db.example:5432/app', 'mysql://root:changeme@db.example/app'];
+  for (const t of keep) assert.equal(red(t).text, t, t);
+  const v = hex(10);
+  const r = red(`postgres://app:${v}@db.example/app`);
+  assert.ok(!r.text.includes(v) && r.counts['url-password'] === 1);
+});

@@ -23,7 +23,7 @@
   "patterns": [
     {"name": "env", "regex": "(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|DSN|CREDENTIAL|AUTH|key|token|secret|password|passwd|dsn|credential|auth)[A-Za-z0-9_]{0,64}[\\\"']?\\s{0,16}[=:]\\s{0,16}[\\\"']?(?!\\$[A-Za-z_{(])([^\\s\\\"',;]{12,})"},
     {"name": "jwt", "regex": "(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{5,}\\.eyJ[A-Za-z0-9_-]{5,}\\.[A-Za-z0-9_-]{5,}"},
-    {"name": "url-password", "regex": "(?:postgres|postgresql|mysql|redis)://[^\\s:/@]{0,256}:(?!\\$[A-Za-z_{(])([^\\s@/]{3,})@"},
+    {"name": "url-password", "regex": "(?:postgres|postgresql|mysql|redis)://[^\\s:/@]{0,256}:(?!\\$[A-Za-z_{(])([^\\s@/]{3,})@", "skipPlaceholders": true},
     {"name": "dsn", "regex": "https://[0-9a-f]{32}@[^\\s\"']+"},
     {"name": "pem", "regex": "-----BEGIN [A-Z ]{0,64}PRIVATE KEY-----(?:[^-]|-(?!----))*?-----END [A-Z ]{0,64}PRIVATE KEY-----"},
     {"name": "github", "regex": "\\b(?:gh[posu]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})"},
