@@ -1,3 +1,6 @@
 # test fixtures: PEM templates filled with random bytes at runtime
 847fafb7cc4ec517b7f6f681d5aaa80a5d8def00:tests/hush.test.js:private-key:58
 9b09abc70c1477621309c6b51891e87c25f8390e:tests/hush.test.js:private-key:64
+# test fixtures: placeholder strings that the literal block must let pass
+ad15fdbbe72165ae9187d2b5cd7e8f777c4b29f6:tests/block.test.js:generic-api-key:294
+638c55c2a9803fb9b798d87be6879f8ceba97009:tests/block.test.js:curl-auth-user:111
