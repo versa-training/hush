@@ -57,17 +57,22 @@ function residue(out, secret) {
   return best;
 }
 
-test('a known value written in two parts, 4 s and 10 s apart, shows 0 characters', async () => {
+test('a known value written in two parts, 4 s and 10 s apart: split after 6 or more characters shows 0 characters, after 5 at most 5', async () => {
   const k = alnum(40);
   const cases = [];
-  for (const [split, gap] of [[5, 4000], [20, 4000], [39, 4000], [20, 10000]]) {
+  for (const [split, gap] of [[5, 4000], [6, 4000], [20, 4000], [39, 4000], [20, 10000]]) {
     cases.push(filter([`value ${k.slice(0, split)}`, gap, `${k.slice(split)} done\n`], { known: [k] }).then((r) => [split, gap, r]));
   }
   cases.push(filter(['v ', 300, k.slice(0, 5), 4000, k.slice(5, 20), 4000, `${k.slice(20)}\n`], { known: [k] }).then((r) => ['5+15', 'two pauses', r]));
   const ph = `[hush HOLD0_SECRET sha:${sha8(k)}]`;
   for (const [split, gap, r] of await Promise.all(cases)) {
-    const want = split === '5+15' ? `v ${ph}\n` : `value ${ph} done\n`;
-    assert.equal(r.out, `${want}[hush] redacted 1 secret(s)\n`, `split ${split}, pause ${gap}`);
+    if (split === 5 || split === '5+15') {
+      // A start shorter than PARTIAL is written after 3 s; the rest is redacted with it.
+      assert.ok(residue(r.out, k) <= 5, `split ${split}: ${residue(r.out, k)} characters`);
+      assert.ok(r.out.includes(ph), `split ${split}: placeholder`);
+      continue;
+    }
+    assert.equal(r.out, `value ${ph} done\n[hush] redacted 1 secret(s)\n`, `split ${split}, pause ${gap}`);
   }
 });
 
@@ -80,6 +85,21 @@ test('an unknown 40-character high-variety token that matches a pattern once com
     cases.push(filter([`API_TOKEN: ${tok.slice(0, split)}`, 4000, `${tok.slice(split)}\n`]).then((r) => [`API_TOKEN: split ${split}`, tok, r]));
   }
   for (const [name, secret, r] of await Promise.all(cases)) assert.ok(residue(r.out, secret) <= 5, `${name}: ${residue(r.out, secret)} characters`);
+});
+
+test('with 20 known values loaded, a last word that ends in a short start of one appears within 3.5 s; a known value split after 3 or 8 characters with a 10 s pause shows at most 5 characters', async () => {
+  const known = Array.from({ length: 20 }, () => hex(20));
+  const k = alnum(40);
+  const [port, s8, s3] = await Promise.all([
+    filter(['Server listening on port 3000', 3700], { mode: 'monitor', known: [...known, `000${hex(20)}`] }),
+    filter([`value ${k.slice(0, 8)}`, 10000, `${k.slice(8)} done\n`], { known: [...known, k] }),
+    filter([`value ${k.slice(0, 3)}`, 10000, `${k.slice(3)} done\n`], { known: [...known, k] }),
+  ]);
+  assert.ok(port.at('port 3000') < 3500, `port 3000 after ${port.at('port 3000')} ms`);
+  for (const [name, r] of [['split 8', s8], ['split 3', s3]]) {
+    assert.ok(residue(r.out, k) <= 5, `${name}: ${residue(r.out, k)} characters`);
+    assert.match(r.out, /\[hush HOLD20_SECRET sha:[0-9a-f]{8}\] done\n/, name);
+  }
 });
 
 test('a prompt without newline still appears within 3.5 s; a short progress word at the 250 ms idle', async () => {

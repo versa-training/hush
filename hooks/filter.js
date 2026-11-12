@@ -10,7 +10,7 @@
 // Usage: node filter.js <nonce> <bash|monitor>
 const fs = require('fs');
 const { StringDecoder } = require('string_decoder');
-const { loadConfig, loadKnown, buildKnown, prefixAt, compile, redact, log, failure } = require('./hush-lib');
+const { loadConfig, loadKnown, buildKnown, prefixAt, compile, redact, log, failure, PARTIAL } = require('./hush-lib');
 const { Strict, isStrict, commandOf } = require('./strict');
 
 const OUT = Number(process.env.HUSH_FILTER_FD || 3);
@@ -33,9 +33,10 @@ const WITHHELD = '[hush withheld]';
 // to its last whitespace (`\r` and `\n` included). Its last word is written
 // too when it is shorter than SHORT characters and may not hold a secret (see
 // secretStart); else it is held until HOLD_MS after the last write, and then
-// written only when it may not hold a secret. A word that may hold one, an
-// open PEM block, and a run of argv lines stay held until more output, the
-// end of the command, or CAP.
+// written only when it may not hold a secret with an end of PARTIAL or more
+// characters that starts a known value. A word that may hold one, an open PEM
+// block, and a run of argv lines stay held until more output, the end of the
+// command, or CAP.
 const IDLE_MS = Number(process.env.HUSH_FILTER_IDLE_MS || 250);
 const HOLD_MS = Number(process.env.HUSH_FILTER_HOLD_MS || 3000);
 const SHORT = 6;
@@ -214,8 +215,10 @@ function onIdle() {
 }
 
 // HOLD_MS after the last write: writes everything but an open PEM block and
-// a last word that may hold a secret. Those wait for more output, the end of
-// the command, or CAP: no timer releases them.
+// a last word that may hold a secret, where a known-value start counts only
+// with PARTIAL or more characters: a shorter one matches by chance too often.
+// Those wait for more output, the end of the command, or CAP: no timer
+// releases them.
 function onHold() {
   if (failed || !pending) return;
   const view = line + pending;
@@ -223,7 +226,7 @@ function onHold() {
   let end = pem >= 0 ? pem : view.length;
   if (pem < 0) {
     const ws = view.search(/\s\S*$/) + 1;
-    if (ws < view.length && secretStart(view, ws)) end = ws;
+    if (ws < view.length && secretStart(view, ws, PARTIAL)) end = ws;
   }
   end = Math.max(0, end - line.length);
   if (end > 0) { emit(pending.slice(0, end)); pending = pending.slice(end); }
@@ -235,15 +238,15 @@ const COMPLETIONS = ['Aa0'.repeat(30), `${'Aa0'.repeat(4)}.eyJ${'Aa0'.repeat(4)}
   `${'Aa0'.repeat(4)}"`, `${'A0'.repeat(10)} `, `${'a0'.repeat(20)}@h`];
 
 // True when the last word of view, from index ws, may hold a secret that is
-// not complete yet: an end of it starts a known value; it and a completion
+// not complete yet: an end of it, min or more characters, starts a known value; it and a completion
 // make a pattern match that covers it (tried on its line, after the last
 // `\n` or `\r`, at most 2,048 characters back); or it is a word of 20 to
 // KEEP characters with high variety (a letter, a digit, and 10 or more
 // distinct characters), the likely shape of a secret, where a prompt or
 // progress text is short or repetitive.
-function secretStart(view, ws) {
+function secretStart(view, ws, min = 1) {
   const word = view.slice(ws);
-  if (prefixAt(word, ctx.index)) return true;
+  if (prefixAt(word, ctx.index, min)) return true;
   if (word.length >= 20 && word.length <= KEEP && /\d/.test(word) && /[A-Za-z]/.test(word) && new Set(word).size >= 10) return true;
   const from = Math.max(view.lastIndexOf('\n', ws - 1), view.lastIndexOf('\r', ws - 1), ws - 2048) + 1;
   const head = view.slice(from);
