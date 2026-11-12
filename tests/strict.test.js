@@ -198,6 +198,14 @@ test('strictCommands: every default regex runs in under 1 s on 32,000-character 
   assert.ok(worst.ms < 1000, JSON.stringify(worst));
 });
 
+test('strictCommands: sed -i without -n edits a .env file in place and is not strict; sed that prints a .env file is', () => {
+  const no = ["sed -i 's/^A=.*/A=1/' .env", "sed -i.bak -e 's/x/y/' next/.env.local", "sed --in-place 's/a/b/' .env", "sed -Ei 's/a/b/' .env",
+    "sed -i 's/a/b/' .env && echo rc=$?"];
+  const yes = ['sed -n 1p .env', "sed 's/x/y/' .env", 'sed -n -i p .env', 'sed --quiet 1p .env', "sed -En '/KEY/p' .env.local", "sed -i 's/a/b/' x.txt; sed -n 1p .env"];
+  for (const c of no) assert.ok(!isStrict(c, cfg), `should not match: ${c}`);
+  for (const c of yes) assert.ok(isStrict(c, cfg), `should match: ${c}`);
+});
+
 test('a command longer than 64 KB is matched on its first 64 KB', () => {
   assert.ok(isStrict(`env; echo ${'x'.repeat(70000)}`, cfg));
   assert.ok(!isStrict(`echo ${'x'.repeat(70000)}; env`, cfg));

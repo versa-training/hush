@@ -15,7 +15,8 @@
     "\\bclever\\s{1,16}env\\b",
     "\\bkubectl\\b(?=[^\\n|;&]{0,256}?\\s(?:get|describe)\\b)(?=[^\\n|;&]{0,256}?\\ssecrets?(?=/|\\s|$|[;&|)]))",
     "\\bsystemctl\\b(?=[^\\n|;&]{0,256}?\\sshow(?:-environment)?\\b)(?=[^\\n|;&]{0,256}?(?:Environment|show-environment))",
-    "\\b(?:cat|less|more|head|tail|bat|batcat|grep|egrep|fgrep|rg|sed|awk)\\b[^\\n|;&]{0,200}?[\\s/'\\\"=]\\.env[\\w.-]{0,64}(?<!\\.(?:example|sample|template))(?=$|[\\s'\\\";&|)])",
+    "\\b(?:cat|less|more|head|tail|bat|batcat|grep|egrep|fgrep|rg|awk)\\b[^\\n|;&]{0,200}?[\\s/'\\\"=]\\.env[\\w.-]{0,64}(?<!\\.(?:example|sample|template))(?=$|[\\s'\\\";&|)])",
+    "\\bsed\\b[^\\n|;&]{0,200}?[\\s/'\\\"=]\\.env[\\w.-]{0,64}(?<!\\.(?:example|sample|template))(?=$|[\\s'\\\";&|)])(?:(?<=\\s(?:-[A-Za-z]{0,8}n|--quiet|--silent)\\s[^\\n|;&]{0,200})|(?<!\\s(?:-[A-Za-z]{0,8}i|--in-place)[^\\n|;&]{0,200}))",
     "\\bps(?:\\s{1,16}[^\\s|;&]{1,64}){0,3}?\\s{1,16}[A-Za-z]{0,32}e[A-Za-z]{0,32}(?=$|[\\s;&|)])",
     "/proc/[^\\s/]{1,64}/environ\\b",
     "(?:^|[;&|({\\n]|\\bsudo\\s)[ \\t]{0,64}history\\b"

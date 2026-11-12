@@ -127,7 +127,8 @@ Some commands print a whole configuration: every environment variable of a conta
 | `clever env` | `clever env --add-export` |
 | `kubectl get` or `describe` of `secret` or `secrets` | `kubectl get secret db -o yaml` |
 | `systemctl show` with `Environment`, `systemctl show-environment` | `systemctl show app -p Environment` |
-| `cat`, `less`, `more`, `head`, `tail`, `bat`, `grep`, `rg`, `sed`, `awk` of a file named `.env*`, except `.env.example`, `.env.sample`, and `.env.template` | `cat next/.env.local`, `grep TOKEN .env` |
+| `cat`, `less`, `more`, `head`, `tail`, `bat`, `grep`, `rg`, `awk` of a file named `.env*`, except `.env.example`, `.env.sample`, and `.env.template` | `cat next/.env.local`, `grep TOKEN .env` |
+| `sed` of such a file, except `sed -i` without `-n` (an edit in place prints nothing) | `sed -n 1p .env` |
 | `ps` with a BSD-style option word that holds `e`, among its first four arguments | `ps auxe`, `ps eww 1` |
 | `/proc/<pid>/environ` | `cat /proc/1/environ` |
 | `history` | `history \| tail` |
