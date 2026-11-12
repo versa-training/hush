@@ -54,7 +54,7 @@ function sh(command, opts = {}) {
 const text = (r) => r.out.toString('utf8');
 const STALE = 'start a new session (a resumed session keeps this line), or delete the line ending in "# hush output filter" from the session\'s env file, ~/.claude/session-env/<session-id>/sessionstart-hook-<n>.sh';
 const unavailable = (hooks) => `[hush] output withheld: wrapper unavailable: ${hooks}/wrap.sh did not start the output filter. Check that node 22 or newer is on PATH and run node ${path.dirname(hooks)}/scripts/check.js. If hush was moved, ${STALE}.`;
-const gone = (hooks) => `[hush] output filter off: ${hooks}/wrap.sh is gone (hush was removed or moved), so this command runs unfiltered. To stop this notice, ${STALE}.`;
+const REMOVED = '[hush] output is NOT filtered because hush was removed; start a new session to end this notice; reinstall hush to filter again.';
 
 // Same exit status, same cwd, same bytes with and without the filter, except
 // line numbers: any env script in front of the command shifts them (tested below).
@@ -427,16 +427,68 @@ test('fail closed: filter.js missing or crashing', () => {
   assert.equal(text(q), `[hush] output withheld: filter failed. Run node ${path.dirname(dir)}/scripts/check.js to find the cause.\n`);
 });
 
-test('wrap.sh gone (hush removed or moved, the line left in a resumed session): the command runs unfiltered with its own status, after one notice', () => {
+// A plugin cache copy of hush: <base>/hush/<version>/ with hooks/ and hush.default.json.
+function cacheCopy(base, version) {
+  const dir = path.join(base, 'hush', version);
+  fs.mkdirSync(path.join(dir, 'hooks'), { recursive: true });
+  for (const f of fs.readdirSync(HOOKS)) fs.copyFileSync(path.join(HOOKS, f), path.join(dir, 'hooks', f));
+  fs.copyFileSync(path.join(HOOKS, '..', 'hush.default.json'), path.join(dir, 'hush.default.json'));
+  return path.join(dir, 'hooks');
+}
+
+test('wrap.sh gone after a plugin update: the newest other version in the cache (version sort) filters the command', () => {
+  const base = fs.mkdtempSync(path.join(tmp, 'update-'));
+  const old = path.join(base, 'hush', '1.2.0', 'hooks');
+  cacheCopy(base, '1.10.0');
+  // 1.9.0 sorts after 1.10.0 as text: if it were picked, the command would not run.
+  fs.writeFileSync(path.join(cacheCopy(base, '1.9.0'), 'wrap.sh'), 'return 1\n');
+  const v = hex(24);
+  const p = sh(`echo X_TOKEN=${v}; exit 3`, { envScript: block(old) });
+  assert.equal(p.status, 3);
+  assert.ok(!text(p).includes(v), 'the value is redacted');
+  assert.match(text(p), /^X_TOKEN=\[hush env sha:[0-9a-f]{8}\]\n\[hush\] redacted 1 secret\(s\)\n$/);
+});
+
+test('wrap.sh missing while hush is still installed: fail closed, the command does not run, status 125, the message names the path', () => {
+  const missing = (hooks) => `[hush] output withheld: ${hooks}/wrap.sh is missing and hush is not fully removed, so this command does not run. To filter again, start a new session (a resumed session keeps this line).\n`;
+  const base = fs.mkdtempSync(path.join(tmp, 'missing-'));
+  const hooks = cacheCopy(base, '2.0.0');
+  const marker = path.join(base, 'ran');
+  // wrap.sh renamed for a moment, no other version.
+  fs.renameSync(path.join(hooks, 'wrap.sh'), path.join(hooks, 'wrap.sh.off'));
+  const p = sh(`touch ${marker}; echo X_TOKEN=${hex(24)}`, { envScript: block(hooks) });
+  assert.deepEqual([p.status, text(p)], [125, missing(hooks)]);
+  assert.ok(!fs.existsSync(marker));
+  fs.renameSync(path.join(hooks, 'wrap.sh.off'), path.join(hooks, 'wrap.sh'));
+  // The version directory emptied.
+  fs.rmSync(path.join(base, 'hush', '2.0.0'), { recursive: true });
+  fs.mkdirSync(path.join(base, 'hush', '2.0.0'));
+  const q = sh(`touch ${marker}; echo hi`, { envScript: block(hooks) });
+  assert.deepEqual([q.status, text(q)], [125, missing(hooks)]);
+  // The version directory gone, the plugin directory not empty.
+  fs.rmdirSync(path.join(base, 'hush', '2.0.0'));
+  fs.writeFileSync(path.join(base, 'hush', '.orphaned_at'), '1');
+  const r = sh(`touch ${marker}; echo hi`, { envScript: block(hooks) });
+  assert.deepEqual([r.status, text(r)], [125, missing(hooks)]);
+  assert.ok(!fs.existsSync(marker));
+  // A checkout (no cache layout): its parent directory holds other projects, no sibling is used.
+  const co = path.join(fs.mkdtempSync(path.join(tmp, 'checkout-')), 'hush');
+  cacheCopy(path.dirname(co), 'other');
+  const s = sh(`touch ${marker}; echo hi`, { envScript: block(path.join(co, 'hooks')) });
+  assert.deepEqual([s.status, text(s)], [125, missing(path.join(co, 'hooks'))]);
+  assert.ok(!fs.existsSync(marker));
+});
+
+test('hush uninstalled (the plugin directory gone, the line left in a resumed session): the command runs unfiltered with its own status, after one notice', () => {
   const marker = path.join(tmp, 'ran-nowrap');
-  const dir = path.join(tmp, 'no-such-dir', 'hooks');
+  const dir = path.join(fs.mkdtempSync(path.join(tmp, 'removed-')), 'hush', '1.0.0', 'hooks');
   const p = sh(`touch ${marker}; echo out; exit 3`, { envScript: block(dir) });
   assert.equal(p.status, 3);
-  assert.equal(text(p), `${gone(dir)}\nout\n`);
+  assert.equal(text(p), `${REMOVED}\nout\n`);
   assert.ok(fs.existsSync(marker));
   // Two copies of the line: one notice each, and still no filter.
   const q = sh('echo two', { envScript: block(dir) + block(dir) });
-  assert.deepEqual([q.status, text(q)], [0, `${gone(dir)}\n${gone(dir)}\ntwo\n`]);
+  assert.deepEqual([q.status, text(q)], [0, `${REMOVED}\n${REMOVED}\ntwo\n`]);
 });
 
 test('wrap.sh present but broken: fail closed, the command does not run, status 125', () => {

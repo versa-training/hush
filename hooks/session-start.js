@@ -22,14 +22,36 @@ const STALE = `start a new session (a resumed session keeps this line), or delet
 // The line this hook appends, one line so that bash messages and $LINENO
 // shift as little as possible. The guard skips the setup when the shell has
 // already run it, so a second copy of the line (another SessionStart, another
-// copy of hush) does not stack a second filter. When wrap.sh is gone (hush was
-// removed or moved), the command runs unfiltered with a notice; when wrap.sh
-// is there but cannot start the filter, the command does not run (exit 125).
+// copy of hush) does not stack a second filter. root is the hooks directory
+// of a plugin version; in the plugin cache that is
+// <cache>/<marketplace>/hush/<version>/hooks. The line picks the wrapper:
+// (a) its own wrap.sh; (b) else, in the plugin cache, the wrap.sh of the
+// newest other version of hush (a plugin update removed the old version);
+// (c) else, while the version directory or a non-empty plugin directory is
+// left, none: the command does not run (exit 125); (d) only when the plugin
+// directory is gone (hush was uninstalled) the command runs unfiltered after
+// a notice. When a wrap.sh is there but cannot start the filter, the command
+// does not run (exit 125).
 function block(root = __dirname) {
   const wrap = path.join(root, 'wrap.sh');
-  const gone = `[hush] output filter off: ${wrap} is gone (hush was removed or moved), so this command runs unfiltered. To stop this notice, ${STALE}.`;
-  const msg = `[hush] output withheld: wrapper unavailable: ${wrap} did not start the output filter. Check that node 22 or newer is on PATH and run node ${arg(path.join(path.dirname(root), 'scripts', 'check.js'))}. If hush was moved, ${STALE}.`;
-  return `if [ "\${__hush_on-}" != "$$" ]; then if [ -f ${quote(wrap)} ]; then . ${quote(wrap)} || { printf '%s\\n' ${quote(msg)}; exit 125; }; else printf '%s\\n' ${quote(gone)} >&2; fi; fi${MARK}\n`;
+  const version = path.dirname(root);
+  const plugin = path.dirname(version);
+  // The message when a wrap.sh cannot start the filter: pre, the wrap.sh, mid, its check.js, post.
+  const pre = '[hush] output withheld: wrapper unavailable: ';
+  const mid = ' did not start the output filter. Check that node 22 or newer is on PATH and run node ';
+  const post = `. If hush was moved, ${STALE}.`;
+  const msg = pre + wrap + mid + arg(path.join(version, 'scripts', 'check.js')) + post;
+  const missing = `[hush] output withheld: ${wrap} is missing and hush is not fully removed, so this command does not run. To filter again, start a new session (a resumed session keeps this line).`;
+  const removed = '[hush] output is NOT filtered because hush was removed; start a new session to end this notice; reinstall hush to filter again.';
+  // (b) only in the cache layout: a checkout loaded with --plugin-dir has no
+  // sibling versions, and its parent directory holds unrelated projects.
+  const sibling = path.basename(plugin) === 'hush'
+    ? `__hush_w=$(for __hush_f in ${quote(plugin)}/*/hooks/wrap.sh; do [ -f "$__hush_f" ] && printf '%s\\n' "$__hush_f"; done | sort -V | tail -n 1); `
+    : '__hush_w=; ';
+  return `if [ "\${__hush_on-}" != "$$" ]; then if [ -f ${quote(wrap)} ]; then . ${quote(wrap)} || { printf '%s\\n' ${quote(msg)}; exit 125; }; else ${sibling}`
+    + `if [ -n "$__hush_w" ]; then . "$__hush_w" || { printf '%s%s%s%s%s\\n' ${quote(pre)} "$__hush_w" ${quote(mid)} "\${__hush_w%/hooks/wrap.sh}/scripts/check.js" ${quote(post)}; exit 125; }; `
+    + `elif [ -e ${quote(version)} ] || [ -n "$(ls -A ${quote(plugin)} 2>/dev/null)" ]; then printf '%s\\n' ${quote(missing)}; exit 125; `
+    + `else printf '%s\\n' ${quote(removed)} >&2; fi; fi; fi${MARK}\n`;
 }
 
 // Appends the block to file unless the file already holds it. Keeps every line
