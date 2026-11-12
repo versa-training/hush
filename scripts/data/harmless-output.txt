@@ -1,0 +1,209 @@
+total 96
+drwxr-xr-x  9 dev dev  4096 Nov 11 09:12 .
+drwxr-xr-x 41 dev dev  4096 Nov 10 18:03 ..
+-rw-r--r--  1 dev dev   120 Nov  2 14:20 .editorconfig
+drwxr-xr-x  8 dev dev  4096 Nov 11 09:10 .git
+-rw-r--r--  1 dev dev    31 Nov  2 14:20 .gitignore
+-rw-r--r--  1 dev dev  1077 Nov  2 14:20 LICENSE
+-rw-r--r--  1 dev dev  5321 Nov 10 17:44 README.md
+drwxr-xr-x  2 dev dev  4096 Nov  9 11:02 bin
+drwxr-xr-x  4 dev dev  4096 Nov 10 16:31 docs
+-rw-r--r--  1 dev dev   912 Nov  8 10:15 package.json
+drwxr-xr-x  6 dev dev  4096 Nov 11 08:57 src
+drwxr-xr-x  3 dev dev  4096 Nov 10 12:40 tests
+lrwxrwxrwx  1 dev dev    11 Nov  2 14:20 CLAUDE.md -> AGENTS.md
+3f9c2ad fix: handle empty input in the parser
+b71e04c feat: add a retry option to the fetch helper
+9a0d6e1 docs: explain the build steps
+c4e8f27 refactor: split the router into two modules
+0d2b5f8 test: cover the date formatter
+e6a17c3 chore: update dependencies
+58f0b9d Merge branch 'feature/search' into main
+On branch main
+Your branch is up to date with 'origin/main'.
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   src/router.js
+	modified:   tests/router.test.js
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	notes/todo.md
+no changes added to commit (use "git add" and/or "git commit -a")
+ 2 files changed, 41 insertions(+), 7 deletions(-)
+TypeError: Cannot read properties of undefined (reading 'length')
+    at parseLine (/home/dev/project/src/parser.js:42:17)
+    at Array.map (<anonymous>)
+    at parseFile (/home/dev/project/src/parser.js:88:23)
+    at Object.<anonymous> (/home/dev/project/bin/run.js:12:5)
+    at Module._compile (node:internal/modules/cjs/loader:1554:14)
+    at Object..js (node:internal/modules/cjs/loader:1706:10)
+    at Module.load (node:internal/modules/cjs/loader:1289:32)
+    at Function._load (node:internal/modules/cjs/loader:1108:12)
+    at node:internal/main/run_main_module:36:49
+Node.js v22.11.0
+Traceback (most recent call last):
+  File "/home/dev/project/app/main.py", line 27, in <module>
+    main()
+  File "/home/dev/project/app/main.py", line 19, in main
+    result = compute(items)
+ValueError: invalid literal for int() with base 10: 'abc'
+{
+  "name": "sample-app",
+  "version": "1.4.2",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test tests/",
+    "lint": "eslint src tests"
+  },
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "express": "^4.21.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "eslint": "^9.14.0",
+    "typescript": "^5.6.3"
+  }
+}
+{"level":"info","time":"2026-11-11T09:12:44.512Z","msg":"server listening","port":3000,"host":"127.0.0.1"}
+{"level":"warn","time":"2026-11-11T09:12:45.003Z","msg":"cache miss","entry":"user:42:profile","durationMs":12}
+{"requestId":"6f1c2b9e-3d4a-4e8f-9b2c-7a1d0e5f3c86","status":200,"path":"/api/items?page=2"}
+The quick brown fox jumps over the lazy dog.
+This change makes the parser skip blank lines instead of failing on them.
+Run the tests again after you install the new dependencies.
+The build finished in 14.2 seconds with no warnings.
+Please review the pull request before the meeting on Thursday.
+We moved the configuration into a single file so that it is easier to find.
+If the server does not start, check that port 3000 is free.
+Each user can belong to several teams, and each team has one owner.
+The report lists every page that loaded slower than two seconds.
+A short summary: three tests failed, all in the date module.
+The migration adds a column and fills it with the default value.
+Version 2 removes the old flag; use the new option instead.
+Open the settings page, choose a language, and save.
+The function returns null when the list is empty.
+Logs older than thirty days are deleted every night at 02:00.
+https://example.org/docs/getting-started
+https://example.org/docs/api/reference#section-4
+https://github.com/example/project/issues/123
+https://github.com/example/project/pull/456/files
+https://registry.npmjs.org/express
+https://nodejs.org/api/fs.html#fsreadfilesyncpath-options
+http://localhost:3000/health
+http://127.0.0.1:8080/api/v1/items?limit=50&offset=100
+https://cdn.example.net/assets/app.3f9c2ad.js
+https://en.wikipedia.org/wiki/Regular_expression
+| id | name       | count | ratio  | updated    |
+|----|------------|-------|--------|------------|
+|  1 | alpha      |   120 | 0.4512 | 2026-11-01 |
+|  2 | beta       |    87 | 0.3301 | 2026-11-02 |
+|  3 | gamma      |  1043 | 0.9120 | 2026-11-03 |
+|  4 | delta      |     5 | 0.0019 | 2026-11-04 |
+|  5 | epsilon    |   310 | 0.1176 | 2026-11-05 |
+  PID TTY          TIME CMD
+ 1234 pts/0    00:00:01 bash
+ 5678 pts/0    00:00:12 node
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda1        80G   41G   36G  54% /
+tmpfs           3.9G     0  3.9G   0% /dev/shm
+              total        used        free      shared  buff/cache   available
+Mem:          7.7Gi       3.1Gi       1.2Gi       210Mi       3.4Gi       4.1Gi
+Swap:         2.0Gi       0.0Ki       2.0Gi
+# tests 143
+# suites 0
+# pass 142
+# fail 0
+# cancelled 0
+# skipped 1
+# duration_ms 8123.456
+ok 1 - parses an empty file
+ok 2 - parses a file with one record
+not ok 3 - rejects a broken record
+  ---
+  duration_ms: 1.23
+  failureType: 'testCodeFailure'
+  error: 'Expected values to be strictly equal'
+  ...
+PASS  tests/router.test.js (1.234 s)
+FAIL  tests/date.test.js
+  formatDate
+    ✓ formats an ISO date (3 ms)
+    ✕ formats a date with a time zone (5 ms)
+Tests:       1 failed, 41 passed, 42 total
+Time:        3.21 s
+src/router.js:12:  const routes = new Map();
+src/router.js:48:  routes.set(path, handler);
+src/parser.js:42:  return line.split(',').map((x) => x.trim());
+tests/router.test.js:7:test('routes a GET request', () => {
+README.md:3:A small web app for tracking reading lists.
+  CC      src/main.o
+  CC      src/util.o
+  LD      bin/app
+make: Nothing to be done for 'all'.
+gcc -O2 -Wall -c src/main.c -o src/main.o
+added 214 packages, and audited 215 packages in 6s
+found 0 vulnerabilities
+npm warn deprecated inflight@1.0.6: This module is not supported
+Compiling sample v0.1.0 (/home/dev/sample)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.31s
+     Running `target/debug/sample`
+Collecting requests==2.32.3
+Successfully installed certifi-2024.8.30 idna-3.10 requests-2.32.3
+diff --git a/src/router.js b/src/router.js
+index 3f9c2ad..b71e04c 100644
+--- a/src/router.js
++++ b/src/router.js
+@@ -10,7 +10,9 @@ export function createRouter() {
+-  const routes = {};
++  const routes = new Map();
++  // Keys are paths; values are handlers.
+CONTAINER ID   IMAGE          COMMAND                  CREATED        STATUS        PORTS                    NAMES
+a1b2c3d4e5f6   nginx:1.27     "/docker-entrypoint.…"   2 hours ago    Up 2 hours    0.0.0.0:8080->80/tcp     web
+NAME                     READY   STATUS    RESTARTS   AGE
+web-7d9f8c6b5-x2k4m      1/1     Running   0          3d
+worker-5c4b3a2d1-q8w7e   1/1     Running   2          3d
+2026-11-11 09:12:44,512 INFO  [main] Application started in 2.4 s
+2026-11-11 09:12:45,003 WARN  [pool-1] Retrying request 2 of 3
+2026-11-11 09:12:46,771 ERROR [pool-1] Request failed: connection refused
+Nov 11 09:12:44 host systemd[1]: Started nginx.service - A high performance web server.
+Nov 11 09:12:45 host kernel: [12345.678901] eth0: link up, 1000 Mbps, full duplex
+PING example.org (93.184.215.14) 56(84) bytes of data.
+64 bytes from 93.184.215.14: icmp_seq=1 ttl=56 time=11.8 ms
+--- example.org ping statistics ---
+1 packets transmitted, 1 received, 0% packet loss, time 0ms
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Content-Length: 512
+Cache-Control: no-cache
+Date: Wed, 11 Nov 2026 09:12:44 GMT
+x = 3.14159, y = 2.71828, z = 1.41421
+mean 42.17  median 40.00  p95 88.31  p99 120.75
+   1    2    3    4    5    6    7    8    9   10
+  11   12   13   14   15   16   17   18   19   20
+0.001 0.010 0.100 1.000 10.000 100.000 1000.000
+1999-12-31 23:59:59
+v1.2.3
+SELECT id, name FROM users WHERE created_at > '2026-01-01' ORDER BY id LIMIT 10;
+ id | name
+----+-------
+  1 | alpha
+  2 | beta
+(2 rows)
+def compute(items):
+    return sum(item.value for item in items if item.value is not None)
+for (let i = 0; i < items.length; i++) total += items[i];
+export const MAX_RETRIES = 3;
+#include <stdio.h>
+int main(void) { printf("hello\n"); return 0; }
+- [x] write the parser
+- [ ] add tests for empty input
+- [ ] update the changelog
+## Installation
+Install the package with your package manager, then run the setup script.
+hello world
+ok
+done

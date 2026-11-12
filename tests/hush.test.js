@@ -11,6 +11,7 @@ const { loadConfig, loadKnown, redact, sha8 } = require('../hooks/hush-lib');
 const hex = (n) => crypto.randomBytes(n).toString('hex');
 const b64 = (n) => crypto.randomBytes(n).toString('base64url');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hush-test-'));
+const CHECK = `node ${path.join(__dirname, '..', 'scripts', 'check.js')}`;
 const write = (name, content) => { const p = path.join(tmp, name); fs.writeFileSync(p, content); return p; };
 
 function withConfig(cfg) {
@@ -162,8 +163,9 @@ test('hook: fails closed on a bad regex', () => {
   const bad = write('bad.json', JSON.stringify({ patterns: [{ name: 'x', regex: '(' }] }));
   const r = hook({ stdout: 'secret stuff', stderr: 'e' }, { HUSH_CONFIG: bad });
   assert.equal(r.status, 0);
-  assert.equal(r.out.updatedToolOutput.stdout, '[hush] output withheld: redaction failed (SyntaxError)');
-  assert.equal(r.out.updatedToolOutput.stderr, '[hush] output withheld: redaction failed (SyntaxError)');
+  const msg = `[hush] output withheld: redaction failed (SyntaxError in ${bad}). Fix or remove ${bad}, then run ${CHECK}.`;
+  assert.equal(r.out.updatedToolOutput.stdout, msg);
+  assert.equal(r.out.updatedToolOutput.stderr, msg);
 });
 
 test('log holds counts, no value', () => {
@@ -188,8 +190,9 @@ test('performance: 100 KB, 250 known values', () => {
   assert.ok(!vals.some((v) => r.text.includes(v)));
 });
 
-const W = (c) => `[hush] output withheld: redaction failed (${c})`;
-const bad = () => write(`bad-${hex(3)}.json`, JSON.stringify({ patterns: [{ name: 'x', regex: '(' }] }));
+let badFile;
+const W = (c) => `[hush] output withheld: redaction failed (${c} in ${badFile}). Fix or remove ${badFile}, then run ${CHECK}.`;
+const bad = () => (badFile = write(`bad-${hex(3)}.json`, JSON.stringify({ patterns: [{ name: 'x', regex: '(' }] })));
 
 test('hook: Read shape, non-string fields kept, no notice', () => {
   const v = `X_TOKEN=${b64(24)}`;
@@ -256,4 +259,49 @@ test('performance: hook with 2,000 short strings and 166 known values', () => {
   console.log(`# perf: ${ms.toFixed(0)} ms hook call incl. node start, 2000 strings`);
   assert.ok(!JSON.stringify(r.out).includes(vals[3]));
   assert.ok(ms < 200, `${ms} ms`);
+});
+
+test('env pattern: linear time on a long word run', () => {
+  const t0 = performance.now();
+  const r = run(`${'b'.repeat(200000)} X_TOKEN=${hex(20)}`);
+  assert.ok(performance.now() - t0 < 200, `${performance.now() - t0} ms`);
+  assert.equal(r.counts.env, 1);
+});
+
+test('check.js: a bad config prints the error class, the file, and the JSON position, never the file content', () => {
+  const v = hex(24);
+  const f = write(`badcheck-${hex(3)}.json`, `{"files": [], "note": "${v}" oops}`);
+  const r = spawnSync('node', [path.join(__dirname, '../scripts/check.js')], { env: { ...process.env, HUSH_CONFIG: f }, encoding: 'utf8' });
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, new RegExp(`^config error: SyntaxError in ${f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} at position \\d+`));
+  assert.match(r.stdout, /self-test: FAILED \(config\)/);
+  assert.ok(!(r.stdout + r.stderr).includes(v));
+});
+
+test('listed files: an unreadable file fails closed with a message naming it; a directory and a broken symlink are skipped with a note', () => {
+  const v = hex(20);
+  const d = fs.mkdtempSync(path.join(tmp, 'perm-'));
+  const locked = path.join(d, 'locked.env');
+  fs.writeFileSync(locked, `LOCKED_SECRET=${v}\n`);
+  fs.chmodSync(locked, 0);
+  fs.mkdirSync(path.join(d, 'dir.env'));
+  fs.symlinkSync(path.join(d, 'gone'), path.join(d, 'link.env'));
+  fs.writeFileSync(path.join(d, 'ok.env'), `OK_SECRET=${hex(20)}\n`);
+  const skipCfg = write(`perm-skip-${hex(3)}.json`, JSON.stringify({ files: [path.join(d, 'dir.env'), path.join(d, 'link.env'), path.join(d, 'ok.env'), path.join(d, '*', 'sub', '.env')] }));
+  const c = spawnSync('node', [path.join(__dirname, '../scripts/check.js')], { env: { ...process.env, HUSH_CONFIG: skipCfg }, encoding: 'utf8' });
+  assert.equal(c.status, 0, c.stdout);
+  assert.ok(c.stdout.includes(`${path.join(d, 'dir.env')}: directory, skipped, 0 value(s)`));
+  assert.ok(c.stdout.includes(`${path.join(d, 'link.env')}: broken symlink, skipped, 0 value(s)`));
+  assert.ok(c.stdout.includes(`${path.join(d, 'ok.env')}: exists, 1 value(s)`));
+  assert.ok(c.stdout.includes(`${path.join(d, 'ok.env', 'sub', '.env')}: missing, 0 value(s)`), 'a path below a file is missing');
+  if (process.getuid && process.getuid() === 0) return; // root reads a mode-0 file
+  const lockCfg = write(`perm-lock-${hex(3)}.json`, JSON.stringify({ files: [path.join(d, '*.env')] }));
+  process.env.HUSH_CONFIG = lockCfg;
+  assert.throws(() => loadKnown(loadConfig()), (e) => e.code === 'EACCES' && e.hushFile === locked);
+  const h = hook({ stdout: `out ${v} end`, stderr: '' }, { HUSH_CONFIG: lockCfg });
+  assert.equal(h.out.updatedToolOutput.stdout, `[hush] output withheld: redaction failed (Error in ${locked}, a file listed in "files"). Make it readable or fix it, or remove it from "files" in ${lockCfg}, then run ${CHECK}.`);
+  const k = spawnSync('node', [path.join(__dirname, '../scripts/check.js')], { env: { ...process.env, HUSH_CONFIG: lockCfg }, encoding: 'utf8' });
+  assert.equal(k.status, 1);
+  assert.match(k.stdout, new RegExp(`config error: Error in ${locked.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  fs.chmodSync(locked, 0o600);
 });
