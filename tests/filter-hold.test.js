@@ -57,6 +57,50 @@ function residue(out, secret) {
   return best;
 }
 
+test('a known value written in two parts, 4 s and 10 s apart, shows 0 characters', async () => {
+  const k = alnum(40);
+  const cases = [];
+  for (const [split, gap] of [[5, 4000], [20, 4000], [39, 4000], [20, 10000]]) {
+    cases.push(filter([`value ${k.slice(0, split)}`, gap, `${k.slice(split)} done\n`], { known: [k] }).then((r) => [split, gap, r]));
+  }
+  cases.push(filter(['v ', 300, k.slice(0, 5), 4000, k.slice(5, 20), 4000, `${k.slice(20)}\n`], { known: [k] }).then((r) => ['5+15', 'two pauses', r]));
+  const ph = `[hush HOLD0_SECRET sha:${sha8(k)}]`;
+  for (const [split, gap, r] of await Promise.all(cases)) {
+    const want = split === '5+15' ? `v ${ph}\n` : `value ${ph} done\n`;
+    assert.equal(r.out, `${want}[hush] redacted 1 secret(s)\n`, `split ${split}, pause ${gap}`);
+  }
+});
+
+test('an unknown 40-character high-variety token that matches a pattern once complete shows at most 5 characters', async () => {
+  const cases = [];
+  for (const split of [5, 20]) {
+    const gh = `ghp_${alnum(36)}`;
+    cases.push(filter([`token ${gh.slice(0, split)}`, 4000, `${gh.slice(split)}\n`]).then((r) => [`ghp_ split ${split}`, gh, r]));
+    const tok = alnum(40);
+    cases.push(filter([`API_TOKEN: ${tok.slice(0, split)}`, 4000, `${tok.slice(split)}\n`]).then((r) => [`API_TOKEN: split ${split}`, tok, r]));
+  }
+  for (const [name, secret, r] of await Promise.all(cases)) assert.ok(residue(r.out, secret) <= 5, `${name}: ${residue(r.out, secret)} characters`);
+});
+
+test('a prompt without newline still appears within 3.5 s; a short progress word at the 250 ms idle', async () => {
+  const [prompt, progress] = await Promise.all([
+    filter(['Password:', 3700], { mode: 'monitor', known: [hex(20)] }),
+    filter(['Downloading 45%', 800], { mode: 'monitor' }),
+  ]);
+  assert.ok(prompt.at('Password:') < 3500, `Password: after ${prompt.at('Password:')} ms`);
+  assert.ok(progress.at('Downloading 45%') < 700, `progress after ${progress.at('Downloading 45%')} ms`);
+});
+
+test('a \\r progress line still updates; a known value growing on it shows at most 5 characters', async () => {
+  const bar = await filter(['\r 10%', 600, '\r 20%', 600, '\r 30%', 600, '\r done\n'], { mode: 'monitor' });
+  assert.ok(bar.at('\r 10%') < 500 && bar.at('\r 20%') < 1100 && bar.at('\r 30%') < 1700, 'each update arrives before the next');
+  assert.equal(bar.out, '\r 10%\r 20%\r 30%\r done\n');
+  const k = alnum(40);
+  const r = await filter([`\rkey ${k.slice(0, 13)}`, 1200, `\rkey ${k.slice(0, 26)}`, 3500, `\rkey ${k}\n`], { known: [k] });
+  assert.ok(residue(r.out, k) <= 5, `${residue(r.out, k)} characters`);
+  assert.match(r.out, /\[hush HOLD0_SECRET partial\]/);
+});
+
 test('forced cut at 1 MB: the rest of an over-long match is withheld, and a known value across the cut is not split', async () => {
   const value = hex(650000);
   const r = await filter([`API_KEY=${value}`, 50, ' after\n']);

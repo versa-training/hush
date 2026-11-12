@@ -199,13 +199,20 @@ const filePath = (v) => /^[\w.~-]*\/[\w./-]*$/.test(v) && (/^(?:\/|\.\.?\/|~\/)/
 // trailing punctuation around it are dropped (as in Markdown: `requirepass /etc/redis`).
 const keepAsPlaceholder = (v) => { const w = v.replace(/^["'`[(]+/, '').replace(/["'`,;:.)\]}]+$/, ''); return placeholder(w) || filePath(w); };
 
+// A word just before a `\r` that ends in the first PARTIAL or more characters
+// of a known value is masked: a progress line redrawn with `\r` shows a value
+// growing in parts, and no part is a whole value.
+const PARTIAL = 6;
+// Prefixes longer than this are not looked up (see buildKnown).
+const MAX_PREFIX = 256;
+
 // Returns {text, counts}; counts maps NAME or pattern name to replacements.
 function redact(text, cfg, known, compiled = compile(cfg), index = buildKnown(known, cfg)) {
   const counts = {};
   const made = [];
   text = text.replace(/\0/g, '');
-  const ph = (name, v) => {
-    made.push(`[hush ${name.replace(/[^A-Za-z0-9_.:-]/g, '_')}${v.length >= cfg.minLength ? ' sha:' + sha8(v) : ''}]`);
+  const ph = (name, v, tag = '') => {
+    made.push(`[hush ${name.replace(/[^A-Za-z0-9_.:-]/g, '_')}${tag}${v.length >= cfg.minLength ? ' sha:' + sha8(v) : ''}]`);
     return `\0${made.length - 1}\0`;
   };
   const allow = allowSet(cfg);
@@ -216,6 +223,15 @@ function redact(text, cfg, known, compiled = compile(cfg), index = buildKnown(kn
       const name = index.names.get(m);
       hit(name);
       return ph(name, m);
+    });
+  }
+  if (index.re && text.includes('\r') && index.prefixes.size) {
+    text = text.replace(/(?<!\S)\S+(?=\r)/g, (w) => {
+      const n = prefixAt(w, index, PARTIAL);
+      if (!n) return w;
+      const name = index.prefixes.get(w.slice(-n));
+      hit(name);
+      return w.slice(0, -n) + ph(name, '', ' partial');
     });
   }
   for (const { name, re, skipPlaceholders } of compiled) {
@@ -233,14 +249,38 @@ function redact(text, cfg, known, compiled = compile(cfg), index = buildKnown(kn
   return { text: text.replace(TOKEN, (t) => made[parseInt(t.slice(1), 10)]), counts };
 }
 
-// One alternation for all known values, longest first; allow-listed values are left out.
+// One alternation for all known values, longest first; allow-listed values
+// are left out. prefixes maps each proper prefix of a value, up to MAX_PREFIX
+// characters, to the value's name; maxPrefix is the longest one. Both are
+// built on first use: most calls never need them.
 function buildKnown(known, cfg) {
   const allow = allowSet(cfg);
   const names = new Map();
   for (const { name, value } of known) if (!allow.has(sha8(value)) && !names.has(value)) names.set(value, name);
-  if (!names.size) return { re: null, names };
+  let pre = null;
+  const prefixes = () => {
+    if (pre) return pre;
+    pre = { map: new Map(), max: 0 };
+    for (const [value, name] of names) {
+      const top = Math.min(value.length - 1, MAX_PREFIX);
+      for (let n = 1; n <= top; n++) { const p = value.slice(0, n); if (!pre.map.has(p)) pre.map.set(p, name); }
+      pre.max = Math.max(pre.max, top);
+    }
+    return pre;
+  };
   const alt = [...names.keys()].sort((x, y) => y.length - x.length).map((v) => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  return { re: new RegExp(alt.join('|'), 'g'), names };
+  const index = { re: names.size ? new RegExp(alt.join('|'), 'g') : null, names };
+  Object.defineProperty(index, 'prefixes', { get: () => prefixes().map });
+  Object.defineProperty(index, 'maxPrefix', { get: () => prefixes().max });
+  return index;
+}
+
+// The length of the longest end of text, min characters or more, that is the
+// start of a known value; 0 when none is.
+function prefixAt(text, index, min = 1) {
+  if (!index.re) return 0;
+  for (let n = Math.min(text.length, index.maxPrefix); n >= min; n--) if (index.prefixes.has(text.slice(-n))) return n;
+  return 0;
 }
 
 // skipPlaceholders: a value that is a placeholder or a file path is kept.
@@ -252,4 +292,4 @@ function log(tool, counts) {
   fs.appendFileSync(file, JSON.stringify({ ts: new Date().toISOString(), tool, counts }) + '\n', { mode: 0o600 });
 }
 
-module.exports = { placeholder, filePath, allowSet, buildKnown, loadConfig, loadKnown, redact, compile, expand, log, sha8, failure, regex, at, ROOT, DEFAULT_FILE };
+module.exports = { placeholder, filePath, allowSet, buildKnown, prefixAt, loadConfig, loadKnown, redact, compile, expand, log, sha8, failure, regex, at, ROOT, DEFAULT_FILE };

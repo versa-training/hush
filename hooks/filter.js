@@ -10,7 +10,7 @@
 // Usage: node filter.js <nonce> <bash|monitor>
 const fs = require('fs');
 const { StringDecoder } = require('string_decoder');
-const { loadConfig, loadKnown, buildKnown, compile, redact, log, failure } = require('./hush-lib');
+const { loadConfig, loadKnown, buildKnown, prefixAt, compile, redact, log, failure } = require('./hush-lib');
 const { Strict, isStrict, commandOf } = require('./strict');
 
 const OUT = Number(process.env.HUSH_FILTER_FD || 3);
@@ -30,14 +30,26 @@ const KEEP = 4096;
 const HARD = CAP * 16;
 const WITHHELD = '[hush withheld]';
 // After this much idle time, a partial line with no newline is written up
-// to its last whitespace. Its last word is written too when it is shorter
-// than SHORT characters and cannot start a known value; else it is held
-// until HOLD_MS after the last write. An open PEM block and a run of argv
-// lines stay held until more output, the end of the command, or CAP.
+// to its last whitespace (`\r` and `\n` included). Its last word is written
+// too when it is shorter than SHORT characters and may not hold a secret (see
+// secretStart); else it is held until HOLD_MS after the last write, and then
+// written only when it may not hold a secret. A word that may hold one, an
+// open PEM block, and a run of argv lines stay held until more output, the
+// end of the command, or CAP.
 const IDLE_MS = Number(process.env.HUSH_FILTER_IDLE_MS || 250);
 const HOLD_MS = Number(process.env.HUSH_FILTER_HOLD_MS || 3000);
 const SHORT = 6;
-const PEM_OPEN = /-----BEGIN [A-Z ]*PRIVATE KEY-----(?![\s\S]*-----END [A-Z ]*PRIVATE KEY-----)/;
+const PEM_BEGIN = /-----BEGIN [A-Z ]{0,64}PRIVATE KEY-----/g;
+const PEM_END = /-----END [A-Z ]{0,64}PRIVATE KEY-----/g;
+
+// The index of the first PEM private key header with no end line after it, or -1.
+function pemOpen(text) {
+  let after = 0;
+  for (const m of text.matchAll(PEM_END)) after = m.index + m[0].length;
+  PEM_BEGIN.lastIndex = after;
+  const m = PEM_BEGIN.exec(text);
+  return m ? m.index : -1;
+}
 
 // A pretty-printed JSON string array puts each element on its own line, so a
 // flag and its value (`"-a",` then the value) arrive on different lines. A
@@ -138,8 +150,8 @@ function drain(all) {
   // Holds are found in the current line and pending together.
   const view = line + pending;
   let end = view.lastIndexOf('\n') + 1;
-  const pem = PEM_OPEN.exec(view.slice(0, end));
-  if (pem && pending.length < CAP) end = pem.index;
+  const pem = pemOpen(view.slice(0, end));
+  if (pem >= 0 && pending.length < CAP) end = pem;
   else if (pending.length < CAP) end = holdArgv(view, end);
   end = Math.max(0, end - line.length);
   if (end > 0) { emit(pending.slice(0, end)); pending = pending.slice(end); }
@@ -185,49 +197,74 @@ function onIdle() {
   if (!pending) return;
   const view = line + pending;
   let end = view.length;
-  const pem = PEM_OPEN.exec(view);
-  if (pem) end = pem.index;
+  const pem = pemOpen(view);
+  if (pem >= 0) end = pem;
   else {
     const nl = view.lastIndexOf('\n') + 1;
     const arg = holdArgv(view, nl);
     if (arg < nl) end = arg;
     else {
       const ws = view.search(/\s\S*$/) + 1;
-      if (ws < view.length && !harmless(view.slice(ws))) end = ws;
+      if (ws < view.length && (view.length - ws >= SHORT || secretStart(view, ws))) end = ws;
     }
   }
   end = Math.max(0, end - line.length);
   if (end > 0) { emit(pending.slice(0, end)); pending = pending.slice(end); }
-  if (pending && !pem) hold = setTimeout(() => { try { onHold(); } catch (e) { withhold(e); } }, Math.max(0, HOLD_MS - IDLE_MS));
+  if (pending && pem < 0) hold = setTimeout(() => { try { onHold(); } catch (e) { withhold(e); } }, Math.max(0, HOLD_MS - IDLE_MS));
 }
 
-// HOLD_MS after the last write: writes everything but an open PEM block.
+// HOLD_MS after the last write: writes everything but an open PEM block and
+// a last word that may hold a secret. Those wait for more output, the end of
+// the command, or CAP: no timer releases them.
 function onHold() {
   if (failed || !pending) return;
   const view = line + pending;
-  const pem = PEM_OPEN.exec(view);
-  const end = pem ? Math.max(0, pem.index - line.length) : pending.length;
+  const pem = pemOpen(view);
+  let end = pem >= 0 ? pem : view.length;
+  if (pem < 0) {
+    const ws = view.search(/\s\S*$/) + 1;
+    if (ws < view.length && secretStart(view, ws)) end = ws;
+  }
+  end = Math.max(0, end - line.length);
   if (end > 0) { emit(pending.slice(0, end)); pending = pending.slice(end); }
 }
 
-// True when a trailing word may be written before the rest of it arrives:
-// it is shorter than SHORT characters (the shortest value a password
-// argument pattern takes), and no known value starts with an end of it.
-function harmless(word) {
-  if (word.length >= SHORT) return false;
-  for (const { value } of ctx.known) {
-    for (let n = 1; n <= word.length; n++) if (value.startsWith(word.slice(-n))) return false;
+// Completions tried after a partial last word: when one makes a pattern
+// match that covers the word, the word may be the start of a secret.
+const COMPLETIONS = ['Aa0'.repeat(30), `${'Aa0'.repeat(4)}.eyJ${'Aa0'.repeat(4)}.${'Aa0'.repeat(4)}`, `${'Aa0'.repeat(4)}@h`,
+  `${'Aa0'.repeat(4)}"`, `${'A0'.repeat(10)} `, `${'a0'.repeat(20)}@h`];
+
+// True when the last word of view, from index ws, may hold a secret that is
+// not complete yet: an end of it starts a known value; it and a completion
+// make a pattern match that covers it (tried on its line, after the last
+// `\n` or `\r`, at most 2,048 characters back); or it is a word of 20 to
+// KEEP characters with high variety (a letter, a digit, and 10 or more
+// distinct characters), the likely shape of a secret, where a prompt or
+// progress text is short or repetitive.
+function secretStart(view, ws) {
+  const word = view.slice(ws);
+  if (prefixAt(word, ctx.index)) return true;
+  if (word.length >= 20 && word.length <= KEEP && /\d/.test(word) && /[A-Za-z]/.test(word) && new Set(word).size >= 10) return true;
+  const from = Math.max(view.lastIndexOf('\n', ws - 1), view.lastIndexOf('\r', ws - 1), ws - 2048) + 1;
+  const head = view.slice(from);
+  const w = ws - from;
+  for (const c of COMPLETIONS) {
+    const t = head + c;
+    for (const { re } of ctx.compiled) for (const m of t.matchAll(re)) if (m.index < head.length && m.index + m[0].length > w) return true;
   }
-  return true;
+  return false;
 }
 
-// [start, end) of every known value, pattern match, and (strict mode) long word in text.
+// [start, end) of every known value, pattern match, and (strict mode) long
+// word in text, and of an end of text that starts a known value.
 function spans(text) {
   const out = [];
   const add = (re) => { for (const m of text.matchAll(re)) if (m[0]) out.push([m.index, m.index + m[0].length]); };
   if (ctx.index.re) add(ctx.index.re);
   for (const { re } of ctx.compiled) add(re);
   if (strict) add(/[^\s"'`,;()[\]{}<>]{20,}/g);
+  const n = prefixAt(text, ctx.index);
+  if (n) out.push([text.length - n, text.length]);
   return out;
 }
 
