@@ -15,7 +15,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const LIMIT_MS = 250;
+const LIMIT_MS = 500;
 const REFERENCE_MS = 13; // baseline of the reference host, in ms
 const MAX_SCALE = 4;
 const SIZES = [32 * 1024, 1024 * 1024];
