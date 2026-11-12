@@ -1,0 +1,44 @@
+ls -la
+ls
+git status
+git log --oneline -10
+git diff --stat
+git add src/router.js
+git commit -m "fix: handle empty input"
+npm test
+npm install
+npm run build
+pnpm lint
+node --test tests/
+node scripts/build.js
+cat README.md
+head -n 20 src/index.js
+tail -f logs/app.log
+grep -rn foo src
+rg TODO src
+find . -name "*.js" -type f
+cd /tmp && make
+make test
+python3 -m pytest -q
+pip install requests
+cargo build --release
+go test ./...
+docker ps
+docker compose up -d
+docker logs web --tail 50
+kubectl get pods
+kubectl logs deploy/web
+curl -s http://localhost:3000/health
+wc -l src/*.js
+mkdir -p build/out
+cp src/a.txt build/
+mv old.txt new.txt
+rm -rf build
+du -sh node_modules
+df -h
+echo hello
+pwd
+which node
+tsc --noEmit
+sed -n 1,40p src/parser.js
+jq .name package.json
