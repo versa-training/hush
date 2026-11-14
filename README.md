@@ -4,7 +4,7 @@
 
 # hush
 
-**A Claude Code plugin that redacts secrets from the output of every tool before the model sees it. Powered by [versa](https://versa.training)**
+**Keep secrets from leaking into the transcript. Powered by [versa](https://versa.training)**
 
 <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.2.0-blue?style=flat-square" alt="version 0.2.0"></a>
 <a href="package.json"><img src="https://img.shields.io/badge/node-%E2%89%A522-blue?style=flat-square" alt="Node 22 or newer"></a>
