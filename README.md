@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/logo.png" alt="hush logo: a pixel-art bird in a police cap and sunglasses next to a briefcase marked ***" width="200">
+
 # hush
 
 **A Claude Code plugin that redacts secrets from the output of every tool before the model sees it. Powered by [versa](https://versa.training)**
